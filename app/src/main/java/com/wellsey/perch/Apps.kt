@@ -14,7 +14,9 @@ import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.PorterDuff
+import android.graphics.Path
 import android.graphics.PorterDuffXfermode
+import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
@@ -153,19 +155,50 @@ class AppRepo(context: Context) {
     }
 }
 
-/** Turns any app icon into a colourful rounded tile with a glassy top edge. */
+/**
+ * Turns any app icon into a glossy, colourful tile: an iOS-style squircle with light falling from
+ * the top, a soft sheen across the upper half and a crisp rim, so it reads as a raised object.
+ */
 object IconMaker {
-    const val RADIUS = 0.30f // 19px on a 62px icon
+    const val RADIUS = 0.30f // roughly the squircle's corner, for things drawn around icons
 
     private val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
     }
-    private val hiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val atop = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+    }
+    private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val shapes = HashMap<Long, Path>()
+
+    /**
+     * A superellipse (|x|^5 + |y|^5 = 1), the "continuous corner" shape iOS uses, filling (0,0)-(w,h).
+     * Cached by size; callers must not change the returned path.
+     */
+    @Synchronized
+    fun shape(w: Float, h: Float = w): Path = shapes.getOrPut((w.toRawBits().toLong() shl 32) or h.toRawBits().toLong()) {
+        val p = Path()
+        val n = 5.0
+        val steps = 96
+        for (i in 0..steps) {
+            val t = 2 * Math.PI * i / steps
+            val c = Math.cos(t)
+            val sn = Math.sin(t)
+            val x = Math.signum(c) * Math.pow(Math.abs(c), 2 / n)
+            val y = Math.signum(sn) * Math.pow(Math.abs(sn), 2 / n)
+            val px = (w / 2f + x * w / 2f).toFloat()
+            val py = (h / 2f + y * h / 2f).toFloat()
+            if (i == 0) p.moveTo(px, py) else p.lineTo(px, py)
+        }
+        p.close()
+        p
+    }
 
     fun make(d: Drawable, size: Int): Bitmap {
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         val s = size.toFloat()
+        val shape = shape(s)
         c.saveLayer(0f, 0f, s, s, null)
         if (d is AdaptiveIconDrawable) {
             // Adaptive layers are 108dp with a 72dp visible centre: draw them 50% larger and centred.
@@ -176,20 +209,47 @@ object IconMaker {
             d.setBounds(0, 0, size, size)
             d.draw(c)
         } else {
-            // Round or oddly shaped legacy icons sit on a white tile, like iOS.
-            c.drawColor(Color.WHITE)
+            // Round or oddly shaped legacy icons sit on a soft white tile, like iOS.
+            atop.xfermode = null
+            atop.shader = LinearGradient(0f, 0f, 0f, s, 0xFFFFFFFF.toInt(), 0xFFE9ECF2.toInt(), Shader.TileMode.CLAMP)
+            c.drawRect(0f, 0f, s, s, atop)
+            atop.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
             val pad = (size * 0.15f).toInt()
             d.setBounds(pad, pad, size - pad, size - pad)
             d.draw(c)
         }
-        c.drawRoundRect(0f, 0f, s, s, s * RADIUS, s * RADIUS, maskPaint)
+        c.drawPath(shape, maskPaint)
+
+        // Light from above: brighter top, gently darker bottom.
+        atop.shader = LinearGradient(
+            0f, 0f, 0f, s,
+            intArrayOf(0x38FFFFFF, 0x00FFFFFF, 0x00000000, 0x33000000),
+            floatArrayOf(0f, 0.42f, 0.6f, 1f), Shader.TileMode.CLAMP,
+        )
+        c.drawRect(0f, 0f, s, s, atop)
+
+        // A curved glossy sheen over the upper half.
+        atop.shader = LinearGradient(0f, 0f, 0f, s * 0.55f, 0x2EFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)
+        c.drawOval(-s * 0.25f, -s * 0.62f, s * 1.25f, s * 0.5f, atop)
+
+        // Inner bottom shade so the tile looks thick.
+        atop.shader = RadialGradient(s / 2f, s * 1.08f, s * 0.62f, 0x26000000, 0x00000000, Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, s, s, atop)
+        atop.shader = null
         c.restore()
 
-        // A soft white highlight along the top edge (inset 0 1px 0 rgba(255,255,255,.45)).
-        hiPaint.strokeWidth = max(1f, s / 62f * 1.5f)
-        hiPaint.shader = LinearGradient(0f, 0f, 0f, s * 0.35f, 0x73FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)
-        val h = hiPaint.strokeWidth / 2f
-        c.drawRoundRect(h, h, s - h, s - h, s * RADIUS - h, s * RADIUS - h, hiPaint)
+        // Rim: bright along the top edge, a faint dark line along the bottom.
+        val sw = max(1f, s / 62f * 1.6f)
+        rimPaint.strokeWidth = sw
+        rimPaint.shader = LinearGradient(
+            0f, 0f, 0f, s,
+            intArrayOf(0x99FFFFFF.toInt(), 0x1FFFFFFF, 0x00FFFFFF, 0x2E000000),
+            floatArrayOf(0f, 0.3f, 0.65f, 1f), Shader.TileMode.CLAMP,
+        )
+        c.save()
+        c.clipPath(shape)
+        c.drawPath(shape, rimPaint) // half the stroke lands inside: a crisp inner rim
+        c.restore()
         return bmp
     }
 

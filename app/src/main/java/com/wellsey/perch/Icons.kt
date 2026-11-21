@@ -52,9 +52,14 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
     var showLabel = true
 
     private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    // Two shadows, like a real object: a wide soft one and a tight contact one.
     private val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.BLACK
-        setShadowLayer(9.dpf, 0f, 6.dpf, 0x48000000)
+        setShadowLayer(11.dpf, 0f, 7.dpf, 0x52000000)
+    }
+    private val contact = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
+        setShadowLayer(2.dpf, 0f, 1.5f.dpf, 0x47000000)
     }
     private val text = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -105,8 +110,12 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
         val s = iconSize.toFloat()
         val l = iconLeft().toFloat()
         val t = iconTop().toFloat()
-        val r = s * IconMaker.RADIUS
-        canvas.drawRoundRect(l + 2f, t + 2f, l + s - 2f, t + s - 2f, r, r, shadow)
+        val shape = IconMaker.shape(s - 4f)
+        canvas.save()
+        canvas.translate(l + 2f, t + 2f)
+        canvas.drawPath(shape, shadow)
+        canvas.drawPath(shape, contact)
+        canvas.restore()
         dst.set(l, t, l + s, t + s)
         canvas.drawBitmap(a.icon, null, dst, bmpPaint)
         if (showLabel) {
@@ -581,8 +590,10 @@ class FloatIcon(context: Context, private val bmp: Bitmap, val iconPx: Int) : Vi
     override fun onDraw(canvas: Canvas) {
         val s = iconPx.toFloat()
         val p = pad.toFloat()
-        val r = s * IconMaker.RADIUS
-        canvas.drawRoundRect(p + 2f, p + 2f, p + s - 2f, p + s - 2f, r, r, shadow)
+        canvas.save()
+        canvas.translate(p + 2f, p + 2f)
+        canvas.drawPath(IconMaker.shape(s - 4f), shadow)
+        canvas.restore()
         dst.set(p, p, p + s, p + s)
         canvas.drawBitmap(bmp, null, dst, paint)
     }
