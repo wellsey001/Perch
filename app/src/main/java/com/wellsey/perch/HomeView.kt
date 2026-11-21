@@ -5,6 +5,7 @@ import android.graphics.Insets
 import android.graphics.Rect
 import android.text.format.DateFormat
 import android.view.GestureDetector
+import android.view.ScaleGestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.VelocityTracker
@@ -25,6 +26,10 @@ import kotlin.math.abs
 class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
     val clock: TextView = label(act, 84f, Fonts.light)
     val date: TextView = label(act, 17f, Fonts.semibold, 0.92f)
+    private val glanceRow = LinearLayout(act)
+    private val glanceIcon = GlyphView(act, Glyphs.BELL, 15, stroke = 2.2f)
+    private val glanceText = label(act, 14f, Fonts.semibold, 0.92f)
+    private var glanceTap: (() -> Unit)? = null
     private val header = LinearLayout(act)
     val widgetRow = LinearLayout(act)
     val weather = WeatherWidget(act)
@@ -41,6 +46,8 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
     private var vertical = false
     private var touchOnInteractive = false
     private var vt: VelocityTracker? = null
+    private var downIcon: AppIconView? = null
+    private var swallow = false
 
     init {
         orientation = VERTICAL
@@ -54,6 +61,15 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
         date.setOnClickListener { act.openCalendarApp(null) }
         header.addView(clock, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         header.addView(date, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = 4.dp })
+        glanceRow.orientation = HORIZONTAL
+        glanceRow.gravity = Gravity.CENTER_VERTICAL
+        glanceRow.visibility = GONE
+        glanceRow.isClickable = true
+        glanceRow.setOnClickListener { glanceTap?.invoke() }
+        glanceText.setShadowLayer(14.dpf, 0f, 1.dpf, 0x59000000)
+        glanceRow.addView(glanceIcon, LayoutParams(15.dp, 15.dp))
+        glanceRow.addView(glanceText, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginStart = 7.dp })
+        header.addView(glanceRow, LayoutParams(LayoutParams.WRAP_CONTENT, 26.dp).apply { topMargin = 4.dp })
         addView(header, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         // Widgets
@@ -123,7 +139,27 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
         g.columns = Prefs.columns
         g.rows = Prefs.rows
         g.maxIcon = 62.dp
+        g.showLabels = Prefs.showLabels
         g.requestLayout()
+    }
+
+    fun showGlance(item: Glance.Item?) {
+        if (item == null) {
+            glanceRow.visibility = GONE
+            glanceTap = null
+            return
+        }
+        glanceIcon.glyph = item.glyph
+        glanceText.text = item.text
+        glanceRow.contentDescription = item.text
+        glanceTap = item.tap
+        if (glanceRow.visibility != VISIBLE) {
+            glanceRow.visibility = VISIBLE
+            if (!Motion.reduced) {
+                glanceRow.alpha = 0f
+                glanceRow.animate().alpha(1f).setDuration(300).start()
+            }
+        }
     }
 
     fun updateClock() {
@@ -134,12 +170,12 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
         calendar.updateDate()
     }
 
-    fun bind(pages: List<List<String?>>, dock: List<String?>, apps: Map<String, AppInfo>) {
+    fun bind(pages: List<List<String?>>, dock: List<String?>, apps: Map<String, AppInfo>, folders: Map<String, Folder>) {
         pager.setPageCount(pages.size) {
             AppGrid(act, act, Place.HOME).also { configurePage(it) }
         }
-        for ((i, p) in pages.withIndex()) pager.page(i)?.bind(p, apps)
-        dockGrid.bind(dock, apps)
+        for ((i, p) in pages.withIndex()) pager.page(i)?.bind(p, apps, folders)
+        dockGrid.bind(dock, apps, folders)
         dots.count = pages.size
         dots.position = pager.current.toFloat()
     }
@@ -199,6 +235,24 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
         return null
     }
 
+    /** The icon whose centre the finger is close to (for dropping one app on another to make a folder). */
+    fun iconNearCenter(x: Float, y: Float): AppIconView? {
+        val grid = pager.page(pager.current) ?: return null
+        for (v in grid.iconViews()) {
+            if (v.itemKey == null || v.alpha < 0.5f) continue
+            val r = v.iconRectOnScreen()
+            val reach = r.width() * 0.36f
+            if (kotlin.math.abs(x - r.exactCenterX()) < reach && kotlin.math.abs(y - r.exactCenterY()) < reach) return v
+        }
+        return null
+    }
+
+    private fun iconAt(x: Int, y: Int): AppIconView? {
+        val all = pager.page(pager.current)?.iconViews().orEmpty() + dockGrid.iconViews()
+        val r = Rect()
+        return all.firstOrNull { it.itemKey != null && it.getGlobalVisibleRect(r) && r.contains(x, y) }
+    }
+
     fun edgeDir(x: Float, y: Float): Int {
         val r = screenRect(pager)
         if (y < r.top || y > r.bottom) return 0
@@ -239,11 +293,47 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
         return false
     }
 
+    // Two fingers: pinch in to edit, swipe down for quick settings (or whatever is chosen).
+    private var multiDone = false
+    private var twoStartY = 0f
+    private val scaler = ScaleGestureDetector(act, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        var total = 1f
+        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+            total = 1f
+            return true
+        }
+
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            total *= detector.scaleFactor
+            if (!multiDone && total < 0.78f && Prefs.pinchToEdit && !act.editing) {
+                multiDone = true
+                act.enterEdit()
+            }
+            return true
+        }
+    })
+
+    private fun avgY(e: MotionEvent): Float {
+        var s = 0f
+        for (i in 0 until e.pointerCount) s += e.getY(i)
+        return s / e.pointerCount
+    }
+
     override fun dispatchTouchEvent(e: MotionEvent): Boolean {
         if (e.actionMasked == MotionEvent.ACTION_DOWN) {
             touchOnInteractive = hitsInteractive(this, e.rawX.toInt(), e.rawY.toInt())
+            downIcon = iconAt(e.rawX.toInt(), e.rawY.toInt())
+            multiDone = false
             vt?.recycle()
             vt = VelocityTracker.obtain()
+        }
+        if (e.actionMasked == MotionEvent.ACTION_POINTER_DOWN && e.pointerCount == 2) twoStartY = avgY(e)
+        if (e.pointerCount >= 2) {
+            scaler.onTouchEvent(e)
+            if (e.actionMasked == MotionEvent.ACTION_MOVE && !multiDone && avgY(e) - twoStartY > 90.dp) {
+                multiDone = true
+                act.onTwoFingerSwipeDown()
+            }
         }
         val raw = MotionEvent.obtain(e)
         raw.setLocation(e.rawX, e.rawY)
@@ -258,13 +348,20 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
         if (act.editing) return false
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = e.rawX; downY = e.rawY; vertical = false
+                downX = e.rawX; downY = e.rawY; vertical = false; swallow = false
             }
 
             MotionEvent.ACTION_MOVE -> {
                 val dx = e.rawX - downX
                 val dy = e.rawY - downY
+                if (e.pointerCount > 1) return false
                 if (abs(dy) > slop * 1.5f && abs(dy) > abs(dx) * 1.3f) {
+                    val icon = downIcon
+                    if (dy < 0 && icon != null && Prefs.iconSwipeUp == "shortcuts") {
+                        swallow = true
+                        act.onIconLongPress(icon)
+                        return true
+                    }
                     vertical = true
                     act.beginVerticalGesture(dy < 0)
                     return true
@@ -276,6 +373,11 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (swallow) {
+            if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) swallow = false
+            return true
+        }
+        if (e.pointerCount > 1 && !vertical) return true
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.rawX; downY = e.rawY; vertical = false

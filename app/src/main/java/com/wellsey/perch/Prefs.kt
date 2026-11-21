@@ -95,7 +95,81 @@ object Prefs {
         get() = b("prompt_dismissed", false)
         set(v) = setB("prompt_dismissed", v)
 
+    // Look
+    var themedIcons: Boolean
+        get() = b("themed_icons", false)
+        set(v) = setB("themed_icons", v)
+    var showLabels: Boolean
+        get() = b("labels", true)
+        set(v) = setB("labels", v)
+    var glassTone: String // "auto" | "light" | "dark"
+        get() = s("glass_tone", "auto")
+        set(v) = setS("glass_tone", v)
+    var parallax: Boolean
+        get() = b("parallax", true)
+        set(v) = setB("parallax", v)
+
+    // Home extras
+    var glance: Boolean
+        get() = b("glance", true)
+        set(v) = setB("glance", v)
+    var dots: Boolean
+        get() = b("dots", true)
+        set(v) = setB("dots", v)
+
+    // More gestures
+    var twoFingerDown: String // "search" | "notifications" | "quick_settings" | "none"
+        get() = s("two_finger_down", "quick_settings")
+        set(v) = setS("two_finger_down", v)
+    var iconSwipeUp: String // "drawer" | "shortcuts"
+        get() = s("icon_swipe_up", "drawer")
+        set(v) = setS("icon_swipe_up", v)
+    var pinchToEdit: Boolean
+        get() = b("pinch_edit", true)
+        set(v) = setB("pinch_edit", v)
+
+    // Folders: one per line, "id<TAB>name<TAB>key|key|key"
+    fun loadFolders(): MutableMap<String, Folder> {
+        val out = LinkedHashMap<String, Folder>()
+        for (line in s("folders", "").split("\n")) {
+            val p = line.split("\t")
+            if (p.size < 3 || p[0].isEmpty()) continue
+            val f = Folder(p[0], p[1], p[2].split("|").filter { it.isNotEmpty() }.toMutableList())
+            out[f.key] = f
+        }
+        return out
+    }
+
+    fun saveFolders(folders: Collection<Folder>) = setS("folders", folders.joinToString("\n") {
+        "${it.id}\t${it.name.replace("\t", " ").replace("\n", " ")}\t${it.items.joinToString("|")}"
+    })
+
+    // Widgets in the widget panel: "id:heightDp,id:heightDp"
+    fun loadWidgets(): MutableList<Pair<Int, Int>> = s("widgets", "").split(",").mapNotNull {
+        val p = it.split(":")
+        if (p.size == 2) p[0].toIntOrNull()?.let { id -> Pair(id, p[1].toIntOrNull() ?: 180) } else null
+    }.toMutableList()
+
+    fun saveWidgets(list: List<Pair<Int, Int>>) = setS("widgets", list.joinToString(",") { "${it.first}:${it.second}" })
+
+    /** Bumped when a backup is restored, so the home screen reloads its layout. */
+    var rev: Long
+        get() = sp.getLong("rev", 0L)
+        set(v) = sp.edit().putLong("rev", v).apply()
+
+    val raw: SharedPreferences get() = sp
+
     var weather: String?
         get() = sp.getString("weather", null)
         set(v) = sp.edit().putString("weather", v).apply()
+}
+
+/** A home screen folder. Its key on the home screen is "folder:<id>". */
+class Folder(val id: String, var name: String, val items: MutableList<String>) {
+    val key: String get() = KEY_PREFIX + id
+
+    companion object {
+        const val KEY_PREFIX = "folder:"
+        fun isFolder(key: String?) = key != null && key.startsWith(KEY_PREFIX)
+    }
 }

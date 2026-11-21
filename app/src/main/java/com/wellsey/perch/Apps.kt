@@ -14,7 +14,11 @@ import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.PorterDuff
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Path
+import android.graphics.PorterDuffColorFilter
+import android.os.Build
 import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
 import android.graphics.Shader
@@ -25,6 +29,8 @@ import android.os.Looper
 import android.os.Process
 import android.os.UserHandle
 import android.os.UserManager
+import android.graphics.BitmapFactory
+import java.io.File
 import java.text.Collator
 import java.util.concurrent.Executors
 import kotlin.math.max
@@ -36,11 +42,16 @@ class AppInfo(
     val user: UserHandle,
     val isSystem: Boolean,
     val icon: Bitmap,
+    val installedAt: Long = 0L,
+    val isWork: Boolean = false,
 ) {
     val packageName: String get() = component.packageName
 }
 
-/** Every launchable app on the phone (and in a work profile), kept up to date as apps come and go. */
+/**
+ * Every launchable app on the phone (and in a work profile), kept up to date as apps come and go.
+ * A snapshot of the list and icons is kept on disk, so after a restart the home screen appears at once.
+ */
 class AppRepo(context: Context) {
     private val ctx = context.applicationContext
     val launcherApps: LauncherApps = ctx.getSystemService(LauncherApps::class.java)
@@ -49,11 +60,17 @@ class AppRepo(context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private val iconCache = HashMap<String, Bitmap>() // only touched on exec
     private val iconPx = (76 * ctx.resources.displayMetrics.density).toInt()
+    private val iconDir = File(ctx.cacheDir, "icons")
+    private val listFile = File(ctx.cacheDir, "apps.txt")
 
     var apps: List<AppInfo> = emptyList(); private set
     var byKey: Map<String, AppInfo> = emptyMap(); private set
     var loaded = false; private set
     var onChanged: (() -> Unit)? = null
+
+    /** Themed icon colours (tile, symbol), or null for the apps' own colours. */
+    @Volatile
+    var themeColors: Pair<Int, Int>? = null
 
     private val callback = object : LauncherApps.Callback() {
         override fun onPackageRemoved(packageName: String, user: UserHandle) = load(packageName)
@@ -65,6 +82,10 @@ class AppRepo(context: Context) {
 
     fun start() {
         launcherApps.registerCallback(callback, main)
+        exec.execute {
+            val snap = readSnapshot()
+            if (snap.isNotEmpty()) main.post { if (!loaded) publish(snap) }
+        }
         load(null)
     }
 
@@ -76,19 +97,26 @@ class AppRepo(context: Context) {
         exec.execute {
             if (dropPackage != null) iconCache.keys.removeAll { it.startsWith("$dropPackage/") }
             val list = query()
-            main.post {
-                apps = list
-                byKey = list.associateBy { it.key }
-                loaded = true
-                onChanged?.invoke()
-            }
+            writeSnapshot(list)
+            main.post { publish(list) }
         }
     }
+
+    private fun publish(list: List<AppInfo>) {
+        apps = list
+        byKey = list.associateBy { it.key }
+        loaded = true
+        onChanged?.invoke()
+    }
+
+    private fun mode(): String = themeColors?.let { "t${Integer.toHexString(it.first)}${Integer.toHexString(it.second)}" } ?: "n"
 
     private fun query(): List<AppInfo> {
         val out = ArrayList<AppInfo>()
         val density = ctx.resources.displayMetrics.densityDpi
         val me = Process.myUserHandle()
+        val mode = mode()
+        iconDir.mkdirs()
         for (user in launcherApps.profiles) {
             val serial = userManager.getSerialNumberForUser(user)
             val activities: List<LauncherActivityInfo> = try {
@@ -100,13 +128,66 @@ class AppRepo(context: Context) {
                 val cn = info.componentName
                 val key = "${cn.flattenToShortString()}#$serial"
                 val sys = (info.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                val icon = iconCache.getOrPut(key) { makeIcon(info, density, user == me) }
-                out.add(AppInfo(key, info.label?.toString() ?: cn.packageName, cn, user, sys, icon))
+                val stamp = try {
+                    if (user == me) ctx.packageManager.getPackageInfo(cn.packageName, 0).lastUpdateTime else info.firstInstallTime
+                } catch (e: Exception) {
+                    info.firstInstallTime
+                }
+                val file = File(iconDir, "${Integer.toHexString(key.hashCode())}_${stamp}_$mode.png")
+                val cacheKey = "$key|$mode"
+                val icon = iconCache[cacheKey] ?: run {
+                    val fromDisk = if (file.exists()) try { BitmapFactory.decodeFile(file.path) } catch (e: Exception) { null } else null
+                    val b = fromDisk ?: makeIcon(info, density, user == me).also { bmp ->
+                        try {
+                            file.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                        } catch (e: Exception) {
+                        }
+                    }
+                    iconCache[cacheKey] = b
+                    b
+                }
+                out.add(
+                    AppInfo(key, info.label?.toString() ?: cn.packageName, cn, user, sys, icon, info.firstInstallTime, user != me),
+                )
             }
         }
         val collator = Collator.getInstance()
         out.sortWith { a, b -> collator.compare(a.label, b.label) }
         return out
+    }
+
+    // ---- snapshot: "key<TAB>label<TAB>component<TAB>serial<TAB>sys<TAB>installed<TAB>iconfile" ----
+
+    private fun writeSnapshot(list: List<AppInfo>) {
+        try {
+            val mode = mode()
+            val sb = StringBuilder()
+            for (a in list) {
+                val serial = userManager.getSerialNumberForUser(a.user)
+                val name = "snap_${Integer.toHexString(a.key.hashCode())}_$mode.png"
+                val f = File(iconDir, name)
+                if (!f.exists()) f.outputStream().use { a.icon.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                sb.append(a.key).append('\t').append(a.label.replace('\t', ' ').replace('\n', ' ')).append('\t')
+                    .append(a.component.flattenToString()).append('\t').append(serial).append('\t')
+                    .append(if (a.isSystem) 1 else 0).append('\t').append(a.installedAt).append('\t').append(name).append('\n')
+            }
+            listFile.writeText(sb.toString())
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun readSnapshot(): List<AppInfo> = try {
+        val me = Process.myUserHandle()
+        listFile.readLines().mapNotNull { line ->
+            val p = line.split('\t')
+            if (p.size < 7) return@mapNotNull null
+            val cn = ComponentName.unflattenFromString(p[2]) ?: return@mapNotNull null
+            val user = userManager.getUserForSerialNumber(p[3].toLong()) ?: return@mapNotNull null
+            val icon = BitmapFactory.decodeFile(File(iconDir, p[6]).path) ?: return@mapNotNull null
+            AppInfo(p[0], p[1], cn, user, p[4] == "1", icon, p[5].toLongOrNull() ?: 0L, user != me)
+        }
+    } catch (e: Exception) {
+        emptyList()
     }
 
     private fun makeIcon(info: LauncherActivityInfo, density: Int, personal: Boolean): Bitmap {
@@ -115,10 +196,25 @@ class AppRepo(context: Context) {
         } catch (e: Exception) {
             null
         } ?: ctx.packageManager.defaultActivityIcon
-        return IconMaker.make(d, iconPx)
+        return IconMaker.make(d, iconPx, themeColors)
     }
 
-    /** The app's own shortcuts (static ones first). Only works once Perch is the default home app. */
+    /** Every app's shortcuts, for search. */
+    fun allShortcuts(): List<ShortcutInfo> = try {
+        if (!launcherApps.hasShortcutHostPermission()) emptyList()
+        else launcherApps.profiles.flatMap { user ->
+            launcherApps.getShortcuts(
+                LauncherApps.ShortcutQuery().setQueryFlags(
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST,
+                ),
+                user,
+            ) ?: emptyList()
+        }.filter { it.isEnabled }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+/** The app's own shortcuts (static ones first). Only works once Perch is the default home app. */
     fun shortcuts(app: AppInfo): List<ShortcutInfo> {
         return try {
             if (!launcherApps.hasShortcutHostPermission()) return emptyList()
@@ -194,13 +290,15 @@ object IconMaker {
         p
     }
 
-    fun make(d: Drawable, size: Int): Bitmap {
+    fun make(d: Drawable, size: Int, themed: Pair<Int, Int>? = null): Bitmap {
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         val s = size.toFloat()
         val shape = shape(s)
         c.saveLayer(0f, 0f, s, s, null)
-        if (d is AdaptiveIconDrawable) {
+        if (themed != null) {
+            drawThemed(c, d, size, themed.first, themed.second)
+        } else if (d is AdaptiveIconDrawable) {
             // Adaptive layers are 108dp with a 72dp visible centre: draw them 50% larger and centred.
             val inset = size / 4
             d.background?.let { it.setBounds(-inset, -inset, size + inset, size + inset); it.draw(c) }
@@ -252,6 +350,45 @@ object IconMaker {
         c.restore()
         return bmp
     }
+
+    /** One-colour symbol on a tile: the app's monochrome icon if it has one, else its silhouette. */
+    private fun drawThemed(c: Canvas, d: Drawable, size: Int, bg: Int, fg: Int) {
+        val s = size.toFloat()
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.shader = LinearGradient(0f, 0f, 0f, s, lighten(bg, 0.12f), bg, Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, s, s, p)
+        val inset = size / 4
+        val mono: Drawable? = if (d is AdaptiveIconDrawable && Build.VERSION.SDK_INT >= 33) d.monochrome else null
+        val symbol: Drawable? = mono ?: (d as? AdaptiveIconDrawable)?.foreground
+        val layer = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val lc = Canvas(layer)
+        if (symbol != null) {
+            symbol.setBounds(-inset, -inset, size + inset, size + inset)
+            symbol.draw(lc)
+        } else {
+            val pad = (size * 0.18f).toInt()
+            d.setBounds(pad, pad, size - pad, size - pad)
+            d.draw(lc)
+        }
+        val tint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        if (symbol == null && isFullBleed(d)) {
+            // A square legacy icon has no silhouette: show it in tinted greys instead.
+            tint.colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) })
+            c.drawBitmap(layer, 0f, 0f, tint)
+            val wash = Paint().apply { color = fg; xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY) }
+            c.drawRect(0f, 0f, s, s, wash)
+        } else {
+            tint.colorFilter = PorterDuffColorFilter(fg, PorterDuff.Mode.SRC_IN)
+            c.drawBitmap(layer, 0f, 0f, tint)
+        }
+        layer.recycle()
+    }
+
+    private fun lighten(c: Int, f: Float): Int = Color.rgb(
+        (Color.red(c) + (255 - Color.red(c)) * f).toInt(),
+        (Color.green(c) + (255 - Color.green(c)) * f).toInt(),
+        (Color.blue(c) + (255 - Color.blue(c)) * f).toInt(),
+    )
 
     private fun isFullBleed(d: Drawable): Boolean {
         val n = 40

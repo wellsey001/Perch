@@ -23,7 +23,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
 
-enum class Place { HOME, DOCK, DRAWER, SUGGESTED }
+enum class Place { HOME, DOCK, DRAWER, SUGGESTED, FOLDER }
 
 interface IconHost {
     val editing: Boolean
@@ -31,6 +31,7 @@ interface IconHost {
     fun onIconLongPress(v: AppIconView)
     fun onIconDragStart(v: AppIconView, rawX: Float, rawY: Float)
     fun onIconRemove(v: AppIconView)
+    fun onFolderClick(v: AppIconView) {}
 }
 
 /** One app: rounded icon, soft shadow, label. Handles tap, long-press, drag and the edit-mode jiggle. */
@@ -41,6 +42,30 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
             field = v
             shownLabel = null
             contentDescription = v?.label
+            invalidate()
+        }
+
+    /** Set instead of [app] when this icon is a folder; [folderApps] are the apps inside it. */
+    var folder: Folder? = null
+        set(v) {
+            field = v
+            shownLabel = null
+            contentDescription = v?.let { "Folder ${it.name}" }
+            invalidate()
+        }
+    var folderApps: List<AppInfo> = emptyList()
+        set(v) { field = v; invalidate() }
+
+    val itemKey: String? get() = app?.key ?: folder?.key
+    private val itemLabel: String get() = app?.label ?: folder?.name ?: ""
+
+    /** Highlighted while another icon hovers over it to make a folder. */
+    var mergeHover = false
+        set(v) {
+            if (field == v) return
+            field = v
+            if (!Motion.reduced) animate().scaleX(if (v) 1.12f else 1f).scaleY(if (v) 1.12f else 1f)
+                .setDuration(260).setInterpolator(Ease.spring).start()
             invalidate()
         }
     var iconSize = 62.dp
@@ -73,6 +98,21 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
         color = 0x80FFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 1.dpf
     }
     private val dst = RectF()
+    private val folderFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x47FFFFFF }
+    private val folderRim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 1.dpf; color = 0x73FFFFFF
+    }
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF453A.toInt() }
+    private val dotRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 1.5f.dpf; color = 0x66FFFFFF
+    }
+    private val dotText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = sp(context, 11f)
+        typeface = Fonts.bold
+        textAlign = Paint.Align.CENTER
+    }
+    private var shadowFor = 0
     private var shownLabel: CharSequence? = null
     private val labelGap = 7.dp
     private val labelH: Int = ceil(text.fontMetrics.descent - text.fontMetrics.ascent).toInt()
@@ -105,8 +145,43 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
 
     private val removable get() = host.editing && (place == Place.HOME || place == Place.DOCK)
 
+    /** The icon as a bitmap (a folder's tile is drawn fresh), for floating and dragging. */
+    fun snapshot(): Bitmap {
+        app?.let { return it.icon }
+        val b = Bitmap.createBitmap(iconSize, iconSize, Bitmap.Config.ARGB_8888)
+        drawFolderTile(Canvas(b), 0f, 0f, iconSize.toFloat())
+        return b
+    }
+
+    private fun drawFolderTile(canvas: Canvas, l: Float, t: Float, s: Float) {
+        canvas.save()
+        canvas.translate(l, t)
+        val shape = IconMaker.shape(s)
+        canvas.drawPath(shape, folderFill)
+        canvas.drawPath(shape, folderRim)
+        // Up to nine little icons in a 3×3 grid.
+        val pad = s * 0.14f
+        val gap = s * 0.06f
+        val cell = (s - 2 * pad - 2 * gap) / 3f
+        for ((i, a) in folderApps.take(9).withIndex()) {
+            val x = pad + (i % 3) * (cell + gap)
+            val y = pad + (i / 3) * (cell + gap)
+            dst.set(x, y, x + cell, y + cell)
+            canvas.drawBitmap(a.icon, null, dst, bmpPaint)
+        }
+        canvas.restore()
+    }
+
+    private fun badgeCount(): Int {
+        if (!Prefs.dots) return 0
+        app?.let { return Notifier.count(it) }
+        return folderApps.sumOf { Notifier.count(it) }
+    }
+
     override fun onDraw(canvas: Canvas) {
-        val a = app ?: return
+        val a = app
+        val f = folder
+        if (a == null && f == null) return
         val s = iconSize.toFloat()
         val l = iconLeft().toFloat()
         val t = iconTop().toFloat()
@@ -116,10 +191,25 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
         canvas.drawPath(shape, shadow)
         canvas.drawPath(shape, contact)
         canvas.restore()
-        dst.set(l, t, l + s, t + s)
-        canvas.drawBitmap(a.icon, null, dst, bmpPaint)
+        if (a != null) {
+            dst.set(l, t, l + s, t + s)
+            canvas.drawBitmap(a.icon, null, dst, bmpPaint)
+        } else {
+            drawFolderTile(canvas, l, t, s)
+        }
+        if (mergeHover) {
+            canvas.save()
+            canvas.translate(l, t)
+            canvas.drawPath(IconMaker.shape(s), folderRim)
+            canvas.restore()
+        }
         if (showLabel) {
-            val lbl = shownLabel ?: TextUtils.ellipsize(a.label, text, (width - 6.dp).toFloat(), TextUtils.TruncateAt.END)
+            val ls = Theme.labelShadow
+            if (ls != shadowFor) {
+                shadowFor = ls
+                text.setShadowLayer(if (Theme.bright) 8.dpf else 6.dpf, 0f, 1.dpf, ls)
+            }
+            val lbl = shownLabel ?: TextUtils.ellipsize(itemLabel, text, (width - 6.dp).toFloat(), TextUtils.TruncateAt.END)
                 .also { shownLabel = it }
             canvas.drawText(lbl, 0, lbl.length, width / 2f, t + s + labelGap - text.fontMetrics.ascent, text)
         }
@@ -130,6 +220,17 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
             canvas.drawCircle(cx, cy, br, badgeFill)
             canvas.drawCircle(cx, cy, br, badgeRing)
             Glyphs.draw(canvas, "M 7 12 L 17 12", cx - 8.dpf, cy - 8.dpf, 16.dpf, Color.WHITE, 2.6f)
+        }
+        val n = badgeCount()
+        if (n > 0 && !removable) {
+            val txt = if (n > 99) "99+" else n.toString()
+            val h = 20.dpf
+            val w = kotlin.math.max(h, dotText.measureText(txt) + 10.dpf)
+            val right = l + s + 5.dp
+            val top = t - 5.dp
+            canvas.drawRoundRect(right - w, top, right, top + h, h / 2f, h / 2f, dotPaint)
+            canvas.drawRoundRect(right - w, top, right, top + h, h / 2f, h / 2f, dotRing)
+            canvas.drawText(txt, right - w / 2f, top + h / 2f - (dotText.descent() + dotText.ascent()) / 2f, dotText)
         }
     }
 
@@ -151,7 +252,7 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (app == null) return false
+        if (itemKey == null) return false
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.rawX; downY = e.rawY
@@ -191,7 +292,7 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
                 if (badgeDown) {
                     if (inBadge(e.x, e.y)) host.onIconRemove(this)
                 } else if (!longFired && !host.editing && hypot(e.rawX - downX, e.rawY - downY) < slop) {
-                    host.onIconClick(this)
+                    if (folder != null) host.onFolderClick(this) else host.onIconClick(this)
                 }
                 return true
             }
@@ -291,7 +392,7 @@ class AppGrid(context: Context, private val host: IconHost, val place: Place) : 
         clipToPadding = false
     }
 
-    fun bind(newKeys: List<String?>, apps: Map<String, AppInfo>) {
+    fun bind(newKeys: List<String?>, apps: Map<String, AppInfo>, folders: Map<String, Folder> = emptyMap()) {
         keys = newKeys
         val wanted = newKeys.filterNotNull().toHashSet()
         val iter = views.entries.iterator()
@@ -309,7 +410,11 @@ class AppGrid(context: Context, private val host: IconHost, val place: Place) : 
                 addView(nv)
                 nv.setEditing(host.editing)
             }
-            if (v.app !== apps[k]) v.app = apps[k]
+            val f = folders[k]
+            if (f != null) {
+                v.folder = f
+                v.folderApps = f.items.mapNotNull { apps[it] }
+            } else if (v.app !== apps[k]) v.app = apps[k]
         }
         requestLayout()
     }
@@ -399,6 +504,11 @@ class Pager(context: Context) : ViewGroup(context) {
         private set
     var onPage: ((Int) -> Unit)? = null
     var onScroll: ((Float) -> Unit)? = null
+    /** Pulling right past the first page (opens the widget panel). Return true to take the pull. */
+    var onPull: ((Float) -> Boolean)? = null
+    var onPullEnd: ((Float, Float) -> Unit)? = null
+    private var pull = 0f
+    private var pulling = false
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private var downX = 0f
     private var downY = 0f
@@ -438,6 +548,8 @@ class Pager(context: Context) : ViewGroup(context) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.x; downY = e.y; lastX = e.x
                 dragging = false
+                pulling = false
+                pull = 0f
                 if (anim?.isRunning == true) {
                     anim?.cancel()
                     dragging = true
@@ -449,7 +561,7 @@ class Pager(context: Context) : ViewGroup(context) {
             MotionEvent.ACTION_MOVE -> {
                 val dx = e.x - downX
                 val dy = e.y - downY
-                if (childCount > 1 && kotlin.math.abs(dx) > slop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.2f) {
+                if ((childCount > 1 || (onPull != null && dx > 0)) && kotlin.math.abs(dx) > slop && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.2f) {
                     dragging = true
                     lastX = e.x
                     parent?.requestDisallowInterceptTouchEvent(true)
@@ -474,6 +586,8 @@ class Pager(context: Context) : ViewGroup(context) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.x; downY = e.y; lastX = e.x
+                pulling = false
+                pull = 0f
                 track(e, true)
                 return true
             }
@@ -481,7 +595,7 @@ class Pager(context: Context) : ViewGroup(context) {
             MotionEvent.ACTION_MOVE -> {
                 track(e)
                 if (!dragging) {
-                    if (childCount > 1 && kotlin.math.abs(e.x - downX) > slop) {
+                    if ((childCount > 1 || (onPull != null && e.x > downX)) && kotlin.math.abs(e.x - downX) > slop) {
                         dragging = true
                         lastX = e.x
                         parent?.requestDisallowInterceptTouchEvent(true)
@@ -489,6 +603,15 @@ class Pager(context: Context) : ViewGroup(context) {
                 }
                 val dx = lastX - e.x
                 lastX = e.x
+                val pullCb = onPull
+                if (current == 0 && pullCb != null && (pulling || scrollX + dx < 0)) {
+                    pull = max(0f, pull - dx)
+                    if (pullCb(pull)) {
+                        pulling = true
+                        scrollTo(0, 0)
+                        return true
+                    }
+                }
                 val maxX = (childCount - 1) * width
                 var nx = scrollX + dx
                 if (nx < 0 || nx > maxX) nx = scrollX + dx * 0.35f // rubber band
@@ -497,7 +620,15 @@ class Pager(context: Context) : ViewGroup(context) {
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (dragging) {
+                if (pulling) {
+                    track(e)
+                    vt?.computeCurrentVelocity(1000)
+                    onPullEnd?.invoke(pull, vt?.xVelocity ?: 0f)
+                    pulling = false
+                    pull = 0f
+                    dragging = false
+                    snapTo(0)
+                } else if (dragging) {
                     track(e)
                     val t = vt
                     t?.computeCurrentVelocity(1000)
@@ -509,7 +640,9 @@ class Pager(context: Context) : ViewGroup(context) {
                         else -> Math.round(pos)
                     }
                     dragging = false
-                    snapTo(target.coerceIn(0, max(0, childCount - 1)))
+                    val dest = target.coerceIn(0, max(0, childCount - 1))
+                    if (dest != current) buzz()
+                    snapTo(dest)
                 }
                 vt?.recycle(); vt = null
             }
@@ -580,6 +713,21 @@ class FloatIcon(context: Context, private val bmp: Bitmap, val iconPx: Int) : Vi
         setShadowLayer(18.dpf, 0f, 14.dpf, 0x66000000)
     }
     private val dst = RectF()
+    private val folderFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x47FFFFFF }
+    private val folderRim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 1.dpf; color = 0x73FFFFFF
+    }
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF453A.toInt() }
+    private val dotRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 1.5f.dpf; color = 0x66FFFFFF
+    }
+    private val dotText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = sp(context, 11f)
+        typeface = Fonts.bold
+        textAlign = Paint.Align.CENTER
+    }
+    private var shadowFor = 0
 
     /** Put the icon (not the padded view) at this screen spot. */
     fun placeAt(r: Rect) {

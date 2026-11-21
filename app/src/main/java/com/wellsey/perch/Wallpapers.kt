@@ -47,6 +47,9 @@ object Wallpapers {
 
     val names: List<String> get() = specs.keys.toList()
 
+    /** Perch wallpapers are this much wider than the screen, for the page parallax. */
+    const val WIDE = 1.3f
+
     fun render(name: String, w: Int, h: Int): Bitmap {
         val s = specs[name] ?: specs.getValue("Aurora")
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -91,15 +94,18 @@ object Wallpapers {
 
     /** Decode a picked photo at about screen size and crop it to fill the screen. */
     fun fromPhoto(a: Activity, uri: Uri): Bitmap {
-        val (w, h) = screenSize(a)
+        val (sw, h) = screenSize(a)
+        var w = sw
         val src = ImageDecoder.createSource(a.contentResolver, uri)
         val decoded = ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             val iw = info.size.width
             val ih = info.size.height
-            val scale = max(w.toFloat() / iw, h.toFloat() / ih)
+            val scale = max(sw * WIDE / iw, h.toFloat() / ih)
             if (scale < 1f) decoder.setTargetSize(max(1, (iw * scale).roundToInt()), max(1, (ih * scale).roundToInt()))
         }
+        // Keep some extra width from wide photos, for the page parallax.
+        w = max(sw, min((sw * WIDE).toInt(), (decoded.width * h.toFloat() / decoded.height).toInt()))
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(out)
         val scale = max(w.toFloat() / decoded.width, h.toFloat() / decoded.height)

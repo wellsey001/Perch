@@ -134,18 +134,39 @@ class SettingsActivity : Activity() {
         wc.addView(row(Glyphs.HEX, 0xFF8B5CF6.toInt(), "Frost my current wallpaper", frostStatus()) { useCurrentWallpaper() })
         list.addView(wc, cardLp())
 
+        // Look
+        val lc = card()
+        lc.addView(toggle(Glyphs.SPARK, 0xFF0EA5E9.toInt(), "Themed icons", Prefs.themedIcons, false) { Prefs.themedIcons = it })
+        lc.addView(toggle(Glyphs.TEXT, 0xFF64748B.toInt(), "App names under icons", Prefs.showLabels) { Prefs.showLabels = it })
+        lc.addView(row(Glyphs.HEX, 0xFF8B5CF6.toInt(), "Glass tone", toneName(Prefs.glassTone)) {
+            choose("Glass tone", listOf(
+                "auto" to "Automatic (darker over bright wallpapers and at night)",
+                "light" to "Light", "dark" to "Dark",
+            ), Prefs.glassTone) { Prefs.glassTone = it; root.invalidateDeep() }
+        })
+        lc.addView(toggle(Glyphs.MOVE, 0xFF14B8A6.toInt(), "Wallpaper glides between pages", Prefs.parallax) { Prefs.parallax = it })
+        list.addView(sectionTitle("Look"))
+        list.addView(lc, cardLp().apply { topMargin = 8.dp })
+
         // Switches
+        list.addView(sectionTitle("Home screen"))
         val tc = card()
         tc.addView(toggle(Glyphs.SEARCH, 0xFF3B82F6.toInt(), "Search bar on home", Prefs.showSearch, false) { Prefs.showSearch = it })
         tc.addView(toggle(Glyphs.CLOUD, 0xFFF59E0B.toInt(), "Weather and calendar", Prefs.showWidgets) { Prefs.showWidgets = it })
+        tc.addView(toggle(Glyphs.BELL, 0xFFF97316.toInt(), "At a Glance (music, charging, alarm)", Prefs.glance) { Prefs.glance = it })
+        tc.addView(toggle(Glyphs.INFO, 0xFFEF4444.toInt(), "Notification dots", Prefs.dots && Notifier.isEnabled(this)) {
+            Prefs.dots = it
+            if (it && !Notifier.isEnabled(this)) explainDots()
+        })
         tc.addView(toggle(Glyphs.HEX, 0xFF8B5CF6.toInt(), "Glass effects", Prefs.glass) {
             Prefs.glass = it
             root.invalidateDeep()
         })
         tc.addView(toggle(Glyphs.HAPTIC, 0xFF10B981.toInt(), "Haptic feedback", Prefs.haptics) { Prefs.haptics = it })
-        list.addView(tc, cardLp())
+        list.addView(tc, cardLp().apply { topMargin = 8.dp })
 
         // Layout and gestures
+        list.addView(sectionTitle("Layout and gestures"))
         val gc = card()
         gc.addView(row(Glyphs.GRID, 0xFF64748B.toInt(), "Grid size", "${Prefs.columns} × ${Prefs.rows}", divider = false) { pickGrid() })
         gc.addView(row(Glyphs.ARROW_UP, 0xFF0EA5E9.toInt(), "Swipe up", gestureName(Prefs.swipeUp)) {
@@ -164,9 +185,31 @@ class SettingsActivity : Activity() {
                 if (it == "lock" && !LockService.isEnabled(this)) explainLock()
             }
         })
+        gc.addView(row(Glyphs.TWO_FINGER, 0xFF3B82F6.toInt(), "Two-finger swipe down", gestureName(Prefs.twoFingerDown)) {
+            choose("Two-finger swipe down", listOf(
+                "quick_settings" to "Quick settings", "notifications" to "Notifications", "search" to "Search", "none" to "Nothing",
+            ), Prefs.twoFingerDown) { Prefs.twoFingerDown = it }
+        })
+        gc.addView(row(Glyphs.ARROW_UP, 0xFFA855F7.toInt(), "Swipe up on an app", if (Prefs.iconSwipeUp == "shortcuts") "Shortcuts" else "All apps") {
+            choose("Swipe up starting on an app", listOf("drawer" to "Open all apps", "shortcuts" to "Show that app's shortcuts"), Prefs.iconSwipeUp) {
+                Prefs.iconSwipeUp = it
+            }
+        })
+        gc.addView(toggle(Glyphs.PINCH, 0xFF22C55E.toInt(), "Pinch to edit home screen", Prefs.pinchToEdit) { Prefs.pinchToEdit = it })
+        gc.addView(row(Glyphs.PERSON, 0xFF0EA5E9.toInt(), "Contacts in search", if (ContactsSearch.hasPermission(this)) "On" else "Off") {
+            if (ContactsSearch.hasPermission(this)) info("Contacts in search", "Already on. To turn it off, remove Perch's Contacts permission in App info.")
+            else requestPermissions(arrayOf(android.Manifest.permission.READ_CONTACTS), REQ_CONTACTS)
+        })
         val hiddenCount = Prefs.hidden.size
         gc.addView(row(Glyphs.HIDE, 0xFF6366F1.toInt(), "Hidden apps", if (hiddenCount == 0) "None" else "$hiddenCount hidden") { showHidden() })
-        list.addView(gc, cardLp())
+        list.addView(gc, cardLp().apply { topMargin = 8.dp })
+
+        // Backup
+        list.addView(sectionTitle("Backup"))
+        val bc = card()
+        bc.addView(row(Glyphs.SAVE, 0xFF10B981.toInt(), "Back up layout and settings", "", divider = false) { backup() })
+        bc.addView(row(Glyphs.RESTORE, 0xFFF59E0B.toInt(), "Restore from a backup", "") { restore() })
+        list.addView(bc, cardLp().apply { topMargin = 8.dp })
 
         // About
         val version = try {
@@ -180,7 +223,20 @@ class SettingsActivity : Activity() {
         }, lp().apply { topMargin = 18.dp })
     }
 
+    private fun sectionTitle(t: String): View = label(this, 13f, Fonts.semibold, 0.7f).apply {
+        text = t.uppercase()
+        letterSpacing = 0.06f
+        setPadding(8.dp, 22.dp, 8.dp, 0)
+    }
+
+    private fun toneName(v: String) = when (v) {
+        "light" -> "Light"
+        "dark" -> "Dark"
+        else -> "Automatic"
+    }
+
     private fun gestureName(v: String) = when (v) {
+        "quick_settings" -> "Quick settings"
         "drawer" -> "All apps"
         "search" -> "Search"
         "notifications" -> "Notifications"
@@ -324,7 +380,8 @@ class SettingsActivity : Activity() {
         val (w, h) = Wallpapers.screenSize(this)
         toast("Setting wallpaper…")
         Thread {
-            val bmp = Wallpapers.render(name, w, h)
+            // A little wider than the screen so it can glide as you swipe between pages.
+            val bmp = Wallpapers.render(name, (w * Wallpapers.WIDE).toInt(), h)
             runOnUiThread {
                 Wallpapers.apply(this, bmp, name) { ok ->
                     toast(if (ok) "$name wallpaper set" else "Couldn't set the wallpaper")
@@ -349,6 +406,23 @@ class SettingsActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode == RESULT_OK && (requestCode == REQ_BACKUP || requestCode == REQ_RESTORE)) {
+            val u = data?.data ?: return
+            try {
+                if (requestCode == REQ_BACKUP) {
+                    contentResolver.openOutputStream(u)?.use { it.write(Backup.export().toByteArray()) }
+                    toast("Backed up")
+                } else {
+                    val text = contentResolver.openInputStream(u)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
+                    Backup.import(text)
+                    toast("Restored. Your home screen will update when you go back to it.")
+                    build()
+                }
+            } catch (e: Exception) {
+                toast(if (requestCode == REQ_BACKUP) "Couldn't save the backup" else "That isn't a Perch backup")
+            }
+            return
+        }
         if (requestCode != REQ_PHOTO || resultCode != RESULT_OK) return
         val uri: Uri = data?.data ?: return
         toast("Setting wallpaper…")
@@ -407,6 +481,55 @@ class SettingsActivity : Activity() {
             Prefs.columns = p[0].toInt()
             Prefs.rows = p[1].toInt()
         }
+    }
+
+    private fun explainDots() {
+        info(
+            "Turn on notification dots",
+            "Perch needs notification access to count each app's notifications (it never reads or keeps what they say). " +
+                "This also lets At a Glance show what's playing. If the switch is greyed out, open Perch's App info, tap ⋮ " +
+                "and choose “Allow restricted settings” first.",
+            "Open settings",
+        ) {
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+                        .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, Notifier.component(this).flattenToString()),
+                )
+            } catch (e: Exception) {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            }
+        }
+    }
+
+    private fun backup() {
+        val i = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, "perch-backup.json")
+        }
+        try {
+            startActivityForResult(i, REQ_BACKUP)
+        } catch (e: Exception) {
+            toast("No file picker found")
+        }
+    }
+
+    private fun restore() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        try {
+            startActivityForResult(i, REQ_RESTORE)
+        } catch (e: Exception) {
+            toast("No file picker found")
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        build()
     }
 
     private fun explainLock() {
@@ -531,6 +654,9 @@ class SettingsActivity : Activity() {
 
     companion object {
         private const val REQ_PHOTO = 21
+        private const val REQ_BACKUP = 22
+        private const val REQ_RESTORE = 23
+        private const val REQ_CONTACTS = 24
     }
 }
 

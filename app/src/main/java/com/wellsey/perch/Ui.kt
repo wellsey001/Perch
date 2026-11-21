@@ -154,6 +154,22 @@ object Glyphs {
     const val WIDGETS = "M 4 4 L 11 4 L 11 11 L 4 11 Z M 13 13 L 20 13 L 20 20 L 13 20 Z O 16.5 7.5 3.5 O 7.5 16.5 3.5"
     const val SHARE = "M 12 3 L 12 15 M 7 8 L 12 3 L 17 8 M 5 13 L 5 19 C 5 20.1 5.9 21 7 21 L 17 21 C 18.1 21 19 20.1 19 19 L 19 13"
 
+    const val BELL = "M 6 16 L 6 11 C 6 7.7 8.7 5 12 5 C 15.3 5 18 7.7 18 11 L 18 16 L 20 18 L 4 18 Z M 10 21 L 14 21"
+    const val PEN = "M 4 20 L 8 19 L 19 8 L 16 5 L 5 16 Z M 14 7 L 17 10"
+    const val FOLDER = "M 3 7 C 3 5.9 3.9 5 5 5 L 9 5 L 11 7 L 19 7 C 20.1 7 21 7.9 21 9 L 21 17 C 21 18.1 20.1 19 19 19 L 5 19 C 3.9 19 3 18.1 3 17 Z"
+    const val UNGROUP = "M 4 4 L 10 4 L 10 10 L 4 10 Z M 14 14 L 20 14 L 20 20 L 14 20 Z M 14 4 L 20 4 L 20 10 L 14 10 Z"
+    const val PERSON = "O 12 8 4 M 4 20 C 5.5 16 8.5 14 12 14 C 15.5 14 18.5 16 20 20"
+    const val CALC = "M 7 3 L 17 3 C 18.1 3 19 3.9 19 5 L 19 19 C 19 20.1 18.1 21 17 21 L 7 21 C 5.9 21 5 20.1 5 19 L 5 5 C 5 3.9 5.9 3 7 3 Z M 8 7 L 16 7 M 8 12 L 8.01 12 M 12 12 L 12.01 12 M 16 12 L 16.01 12 M 8 16 L 8.01 16 M 12 16 L 12.01 16 M 16 16 L 16.01 16"
+    const val CHEVRON_UP = "M 5 15 L 12 8 L 19 15"
+    const val CHEVRON_DOWN = "M 5 9 L 12 16 L 19 9"
+    const val BRIEFCASE = "M 4 8 L 20 8 L 20 19 L 4 19 Z M 9 8 L 9 5 L 15 5 L 15 8 M 4 13 L 20 13"
+    const val SAVE = "M 12 4 L 12 15 M 7 10 L 12 15 L 17 10 M 5 19 L 19 19"
+    const val RESTORE = "M 12 20 L 12 9 M 7 14 L 12 9 L 17 14 M 5 5 L 19 5"
+    const val TEXT = "M 5 6 L 19 6 M 12 6 L 12 19 M 9 19 L 15 19"
+    const val MOVE = "M 12 3 L 12 21 M 3 12 L 21 12 M 9 6 L 12 3 L 15 6 M 9 18 L 12 21 L 15 18 M 6 9 L 3 12 L 6 15 M 18 9 L 21 12 L 18 15"
+    const val PINCH = "M 6 6 L 10 10 M 6 6 L 6 9 M 6 6 L 9 6 M 18 18 L 14 14 M 18 18 L 18 15 M 18 18 L 15 18"
+    const val TWO_FINGER = "M 8 4 L 8 14 M 14 4 L 14 14 M 5 17 L 11 20 L 17 17"
+
     // Weather
     const val SUN = "O 12 12 4 M 12 2 L 12 4 M 12 20 L 12 22 M 2 12 L 4 12 M 20 12 L 22 12 M 4.9 4.9 L 6.3 6.3 M 17.7 17.7 L 19.1 19.1 M 4.9 19.1 L 6.3 17.7 M 17.7 6.3 L 19.1 4.9"
     const val MOON = "M 20 14.5 C 18.8 15.1 17.4 15.5 16 15.5 C 11 15.5 8.5 12.5 8.5 8 C 8.5 6.6 8.9 5.2 9.5 4 C 5.8 5 3.5 8.3 3.5 12 C 3.5 16.7 7.3 20.5 12 20.5 C 15.7 20.5 19 18.2 20 14.5 Z"

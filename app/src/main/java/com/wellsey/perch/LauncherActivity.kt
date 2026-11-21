@@ -6,6 +6,10 @@ import android.app.Activity
 import android.app.ActivityOptions
 import android.app.SearchManager
 import android.app.WallpaperManager
+import android.appwidget.AppWidgetProviderInfo
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetHost
 import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
@@ -60,7 +64,27 @@ class LauncherActivity : Activity(), IconHost {
     // The home layout: pages of app keys, and the dock.
     private var pages: MutableList<MutableList<String>> = mutableListOf()
     private var dock: MutableList<String> = mutableListOf()
+    private var folders: MutableMap<String, Folder> = LinkedHashMap()
     private var modelLoaded = false
+    private var loadedRev = 0L
+
+    private var folderView: FolderOverlay? = null
+    private var sheet: GlassSheet? = null
+    private var lastLaunchKey: String? = null
+    private var iconMode: Pair<Int, Int>? = null
+    private lateinit var glance: Glance
+
+    // Android widgets
+    lateinit var widgetHost: AppWidgetHost
+        private set
+    private lateinit var widgetManager: AppWidgetManager
+    private lateinit var widgetPanel: WidgetPanel
+    var widgets: MutableList<Pair<Int, Int>> = mutableListOf()
+        private set
+    private var pendingWidget: Pair<Int, AppWidgetProviderInfo>? = null
+    var widgetProgress = 0f
+        private set
+    private var widgetAnim: ValueAnimator? = null
     private val capacity get() = Prefs.columns * Prefs.rows
 
     private var resumed = false
@@ -80,10 +104,15 @@ class LauncherActivity : Activity(), IconHost {
         repo = AppRepo(this)
         root = FrameLayout(this)
         stage = FrameLayout(this)
+        widgetManager = AppWidgetManager.getInstance(this)
+        widgetHost = AppWidgetHost(this, WIDGET_HOST_ID)
+        widgets = Prefs.loadWidgets()
         home = HomeView(this)
+        widgetPanel = WidgetPanel(this)
         drawer = DrawerView(this)
         overlay = FrameLayout(this)
         stage.addView(home, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        stage.addView(widgetPanel, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         stage.addView(drawer, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         root.addView(stage, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         root.addView(overlay, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -95,13 +124,29 @@ class LauncherActivity : Activity(), IconHost {
             insets = bars
             home.applyInsets(bars)
             drawer.applyInsets(bars, ime)
+            widgetPanel.applyInsets(bars)
             positionOverlays()
             wi
         }
 
         home.applySettings()
+        home.pager.onPull = { pull -> if (editing) false else { setWidgetProgress((pull / (home.width * 0.7f)).coerceIn(0f, 1f)); true } }
+        home.pager.onPullEnd = { _, vx -> endWidgetDrag(vx, false) }
+        home.pager.onScroll = { pos ->
+            home.dots.position = pos
+            panWallpaper(pos)
+        }
+        widgetPanel.rebuild()
+
+        Theme.update(this)
+        iconMode = if (Prefs.themedIcons) Theme.iconColors() else null
+        repo.themeColors = iconMode
         repo.onChanged = { onAppsChanged() }
         repo.start()
+        loadedRev = Prefs.rev
+
+        glance = Glance(this) { home.showGlance(it) }
+        Notifier.addListener(notifListener)
 
         Backdrop.addListener(backdropListener)
         Backdrop.reload(this)
@@ -120,6 +165,7 @@ class LauncherActivity : Activity(), IconHost {
         super.onDestroy()
         repo.stop()
         Backdrop.removeListener(backdropListener)
+        Notifier.removeListener(notifListener)
         try {
             WallpaperManager.getInstance(this).removeOnColorsChangedListener(colorsListener)
             unregisterReceiver(timeReceiver)
@@ -127,14 +173,41 @@ class LauncherActivity : Activity(), IconHost {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        try {
+            widgetHost.startListening()
+        } catch (e: Exception) {
+        }
+        glance.start()
+    }
+
     override fun onResume() {
         super.onResume()
         resumed = true
         home.applySettings()
+        // A restored backup: reload everything from settings.
+        if (Prefs.rev != loadedRev) {
+            loadedRev = Prefs.rev
+            modelLoaded = false
+            widgets = Prefs.loadWidgets()
+            widgetPanel.rebuild()
+            if (repo.loaded) onAppsChanged()
+        }
+        // Themed icons switched on or off, or the wallpaper colour changed.
+        val mode = if (Prefs.themedIcons) Theme.iconColors() else null
+        if (mode != iconMode) {
+            iconMode = mode
+            repo.themeColors = mode
+            repo.load(null)
+        }
         if (modelLoaded) {
             normalize()
             bindAll()
         }
+        glance.connectMedia()
+        glance.refresh()
+        returnToIcon()
         drawer.refresh()
         home.updateClock()
         refreshWidgets(false)
@@ -157,7 +230,15 @@ class LauncherActivity : Activity(), IconHost {
         super.onStop()
         cameFromApp = true
         menu?.dismiss(false)
+        folderView?.close(false)
+        sheet?.close()
         if (drawer.isShown || drawerProgress > 0f) closeDrawer(false)
+        if (widgetProgress > 0f) closeWidgets(false)
+        try {
+            widgetHost.stopListening()
+        } catch (e: Exception) {
+        }
+        glance.stop()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -165,8 +246,11 @@ class LauncherActivity : Activity(), IconHost {
         if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_HOME)) {
             val wasHere = resumed
             when {
+                sheet != null -> sheet?.close()
                 menu != null -> menu?.dismiss(wasHere)
+                folderView != null -> folderView?.close(wasHere)
                 drawerProgress > 0.01f -> closeDrawer(wasHere)
+                widgetProgress > 0.01f -> closeWidgets(wasHere)
                 editing -> exitEdit()
                 wasHere -> home.pager.snapTo(0)
             }
@@ -176,12 +260,21 @@ class LauncherActivity : Activity(), IconHost {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
+            sheet != null -> sheet?.close()
             prompt != null -> prompt?.dismiss()
             menu != null -> menu?.dismiss(true)
+            folderView != null -> folderView?.close(true)
             drawerProgress > 0.01f -> closeDrawer()
+            widgetProgress > 0.01f -> closeWidgets()
             editing -> exitEdit()
             else -> {} // Home stays put
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Theme.update(this) // dark mode changed: retune the glass
+        root.invalidateDeep()
     }
 
     override fun onAttachedToWindow() {
@@ -190,16 +283,47 @@ class LauncherActivity : Activity(), IconHost {
     }
 
     private fun setWallpaperOffsets() {
+        panWallpaper(home.pager.current.toFloat())
+    }
+
+    /** Glide the wallpaper as the pages move (if it's wider than the screen). */
+    private fun panWallpaper(pos: Float) {
         val token = window.decorView.windowToken ?: return
+        val n = pages.size
+        val x = if (Prefs.parallax && n > 1) (pos / (n - 1)).coerceIn(0f, 1f) else 0.5f
         try {
-            WallpaperManager.getInstance(this).setWallpaperOffsets(token, 0.5f, 0.5f)
+            val wm = WallpaperManager.getInstance(this)
+            wm.setWallpaperOffsetSteps(if (n > 1) 1f / (n - 1) else 0f, 0f)
+            wm.setWallpaperOffsets(token, x, 0.5f)
         } catch (e: Exception) {
         }
+        Backdrop.setPan(x)
+    }
+
+    /** Coming back from an app: its icon settles back into place. */
+    private fun returnToIcon() {
+        val key = lastLaunchKey
+        lastLaunchKey = null
+        if (!cameFromApp || firstShow || Motion.reduced) return
+        val v = key?.let { home.viewFor(it) } ?: return
+        v.scaleX = 1.35f
+        v.scaleY = 1.35f
+        v.alpha = 0f
+        v.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(520).setInterpolator(Ease.spring).start()
     }
 
     // ------------------------------------------------------------ wallpaper and time
 
-    private val backdropListener: () -> Unit = { root.invalidateDeep() }
+    private val backdropListener: () -> Unit = {
+        root.invalidateDeep()
+        val mode = if (Prefs.themedIcons) Theme.iconColors() else null
+        if (mode != iconMode) {
+            iconMode = mode
+            repo.themeColors = mode
+            repo.load(null)
+        }
+    }
+    private val notifListener: () -> Unit = { home.invalidateDeep(); drawer.invalidateDeep() }
 
     private val colorsListener = WallpaperManager.OnColorsChangedListener { _, which ->
         if ((which and WallpaperManager.FLAG_SYSTEM) != 0) {
@@ -220,6 +344,7 @@ class LauncherActivity : Activity(), IconHost {
 
     private fun onAppsChanged() {
         if (!modelLoaded) {
+            folders = Prefs.loadFolders()
             if (Prefs.hasHome()) {
                 pages = Prefs.loadHome()
                 dock = Prefs.loadDock()
@@ -274,8 +399,31 @@ class LauncherActivity : Activity(), IconHost {
         if (repo.apps.isEmpty()) return
         val known = repo.byKey.keys
         val hidden = Prefs.hidden
-        for (p in pages) p.removeAll { it !in known || it in hidden }
-        dock.removeAll { it !in known || it in hidden }
+        for (f in folders.values) f.items.removeAll { it !in known || it in hidden }
+        fun gone(k: String) = if (Folder.isFolder(k)) folders[k] == null else k !in known || k in hidden
+        for (p in pages) p.removeAll { gone(it) }
+        dock.removeAll { gone(it) }
+        tidyFolders()
+    }
+
+    /** Folders with one app left turn back into that app; empty ones disappear. */
+    private fun tidyFolders() {
+        for (f in folders.values.toList()) {
+            if (f.items.size >= 2) continue
+            val replacement = f.items.firstOrNull()
+            fun swap(list: MutableList<String>) {
+                val i = list.indexOf(f.key)
+                if (i >= 0) {
+                    if (replacement != null && !isOnHome(replacement)) list[i] = replacement else list.removeAt(i)
+                }
+            }
+            swap(dock)
+            for (p in pages) swap(p)
+            folders.remove(f.key)
+        }
+        // Folders nothing points at any more.
+        val used = (dock + pages.flatten()).toSet()
+        folders.keys.retainAll(used)
     }
 
     private fun normalize() {
@@ -306,15 +454,16 @@ class LauncherActivity : Activity(), IconHost {
     private fun save() {
         Prefs.saveHome(pages)
         Prefs.saveDock(dock)
+        Prefs.saveFolders(folders.values)
     }
 
     private fun bindAll() {
-        home.bind(pages, dock, repo.byKey)
+        home.bind(pages, dock, repo.byKey, folders)
     }
 
     fun dockKeys(): List<String> = dock
 
-    private fun isOnHome(key: String) = key in dock || pages.any { key in it }
+    private fun isOnHome(key: String) = key in dock || pages.any { key in it } || folders.values.any { key in it.items }
 
     private fun addToHome(key: String) {
         if (isOnHome(key)) return
@@ -332,6 +481,9 @@ class LauncherActivity : Activity(), IconHost {
     private fun removeFromHome(key: String) {
         dock.remove(key)
         for (p in pages) p.remove(key)
+        for (f in folders.values) f.items.remove(key)
+        folders.remove(key)
+        tidyFolders()
         save()
         bindAll()
     }
@@ -354,6 +506,7 @@ class LauncherActivity : Activity(), IconHost {
         try {
             repo.launcherApps.startMainActivity(app.component, app.user, bounds, opts)
             Prefs.bumpLaunch(app.key)
+            lastLaunchKey = icon?.takeIf { it.place == Place.HOME || it.place == Place.DOCK }?.let { app.key }
         } catch (e: Exception) {
             toast("Couldn't open ${app.label}")
         }
@@ -367,6 +520,14 @@ class LauncherActivity : Activity(), IconHost {
         } catch (e: Exception) {
             false
         }
+    }
+
+    fun startExternal(i: Intent) {
+        if (!startSafely(i)) toast("Couldn't open that")
+    }
+
+    fun requestContacts() {
+        requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), REQ_CONTACTS)
     }
 
     fun openClockApp() {
@@ -403,11 +564,11 @@ class LauncherActivity : Activity(), IconHost {
         if (editing && (v.place == Place.HOME || v.place == Place.DOCK)) return
         v.resetPress()
         v.buzz(HapticFeedbackConstants.LONG_PRESS)
-        showAppMenu(v)
+        if (v.folder != null) showFolderMenu(v) else showAppMenu(v)
     }
 
     override fun onIconRemove(v: AppIconView) {
-        val key = v.app?.key ?: return
+        val key = v.itemKey ?: return
         v.buzz()
         removeFromHome(key)
     }
@@ -429,7 +590,9 @@ class LauncherActivity : Activity(), IconHost {
         }
         val actions = ArrayList<MenuEntry>()
         actions += MenuEntry("Edit home screen", Glyphs.GRID) { enterEdit() }
-        if (v.place == Place.HOME || v.place == Place.DOCK) {
+        if (v.place == Place.FOLDER) {
+            actions += MenuEntry("Remove from folder", Glyphs.UNGROUP) { removeFromFolder(app.key) }
+        } else if (v.place == Place.HOME || v.place == Place.DOCK) {
             actions += MenuEntry("Remove from home", Glyphs.MINUS_CIRCLE) { removeFromHome(app.key) }
         } else if (!isOnHome(app.key)) {
             actions += MenuEntry("Add to home screen", Glyphs.PLUS) { addToHome(app.key) }
@@ -443,11 +606,26 @@ class LauncherActivity : Activity(), IconHost {
         m.show()
     }
 
+    private fun showFolderMenu(v: AppIconView) {
+        val f = v.folder ?: return
+        menu?.dismiss(false)
+        val items = listOf(
+            MenuEntry("Rename folder", Glyphs.PEN) { openFolder(v, rename = true) },
+            MenuEntry("Edit home screen", Glyphs.GRID) { enterEdit() },
+            MenuEntry("Ungroup", Glyphs.UNGROUP) { ungroup(f) },
+        )
+        val m = MenuOverlay(this, v, 0f, 0f, listOf(items))
+        menu = m
+        overlay.addView(m, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        m.show()
+    }
+
     fun showHomeMenu(x: Float, y: Float) {
         if (menu != null || drawerProgress > 0.01f) return
         home.buzz(HapticFeedbackConstants.LONG_PRESS)
         val items = listOf(
             MenuEntry("Edit home screen", Glyphs.GRID) { enterEdit() },
+            MenuEntry("Widgets", Glyphs.WIDGETS) { openWidgets() },
             MenuEntry("Wallpaper", Glyphs.IMAGE) { openSettings() },
             MenuEntry("Perch settings", Glyphs.GEAR) { openSettings() },
         )
@@ -462,7 +640,9 @@ class LauncherActivity : Activity(), IconHost {
         if (menu === m) menu = null
     }
 
-    fun setStageBlur(f: Float) {
+    fun setStageBlur(amount: Float) {
+        // An open folder keeps the home screen blurred underneath a menu.
+        val f = if (folderView != null && menu != null) 1f else amount
         if (Prefs.glass && f > 0.01f) {
             val r = 16.dpf * f
             stage.setRenderEffect(RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP))
@@ -645,7 +825,7 @@ class LauncherActivity : Activity(), IconHost {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        refreshWidgets(true)
+        if (requestCode == REQ_CONTACTS) drawer.refresh() else refreshWidgets(true)
     }
 
     // ------------------------------------------------------------ default home prompt
@@ -742,43 +922,59 @@ class LauncherActivity : Activity(), IconHost {
         val originDock: Boolean,
         val originPage: Int,
         val originIndex: Int,
+        val originFolder: Folder? = null,
     ) {
         var target: Target? = null
         var edgeDir = 0
         var x = 0f
         var y = 0f
+        var mergeCandidate: AppIconView? = null
+        var merging = false
     }
 
     private var drag: Drag? = null
     private var cancelSent = false
 
     override fun onIconDragStart(v: AppIconView, rawX: Float, rawY: Float) {
-        val app = v.app ?: return
+        val key = v.itemKey ?: return
+        val r = v.iconRectOnScreen()
+        val bmp = v.snapshot()
         menu?.dismiss(false)
         prompt?.dismiss()
 
-        // Take the app out of the layout, remembering where it was.
+        // Take the item out of the layout, remembering where it was.
         var originDock = false
         var originPage = -1
-        var originIndex = dock.indexOf(app.key)
-        if (originIndex >= 0) {
-            originDock = true
-            dock.removeAt(originIndex)
+        var originFolder: Folder? = null
+        var originIndex = -1
+        if (v.place == Place.FOLDER) {
+            originFolder = folderView?.folder
+            originIndex = originFolder?.items?.indexOf(key) ?: -1
+            originFolder?.items?.remove(key)
+            // Close it after this touch event: removing the view mid-dispatch is unsafe.
+            val fv = folderView
+            fv?.alpha = 0f
+            root.post { fv?.close(false) }
         } else {
-            for ((pi, p) in pages.withIndex()) {
-                val i = p.indexOf(app.key)
-                if (i >= 0) {
-                    originPage = pi; originIndex = i; p.removeAt(i); break
+            originIndex = dock.indexOf(key)
+            if (originIndex >= 0) {
+                originDock = true
+                dock.removeAt(originIndex)
+            } else {
+                for ((pi, p) in pages.withIndex()) {
+                    val i = p.indexOf(key)
+                    if (i >= 0) {
+                        originPage = pi; originIndex = i; p.removeAt(i); break
+                    }
                 }
             }
         }
 
-        val r = v.iconRectOnScreen()
-        val f = FloatIcon(this, app.icon, r.width())
+        val f = FloatIcon(this, bmp, r.width())
         overlay.addView(f, FrameLayout.LayoutParams(f.size, f.size))
         f.placeAt(r)
         if (!Motion.reduced) f.animate().scaleX(1.12f).scaleY(1.12f).setDuration(300).setInterpolator(Ease.spring).start()
-        val d = Drag(app.key, f, rawX - f.x, rawY - f.y, originDock, originPage, originIndex)
+        val d = Drag(key, f, rawX - f.x, rawY - f.y, originDock, originPage, originIndex, originFolder)
         d.x = rawX; d.y = rawY
         drag = d
         cancelSent = false
@@ -811,9 +1007,39 @@ class LauncherActivity : Activity(), IconHost {
         return true
     }
 
+    private val mergeArm = Runnable {
+        val d = drag
+        val c = d?.mergeCandidate
+        if (d != null && c != null) {
+            d.merging = true
+            c.mergeHover = true
+            home.buzz(HapticFeedbackConstants.VIRTUAL_KEY)
+        }
+    }
+
+    private fun clearMerge(d: Drag) {
+        handler.removeCallbacks(mergeArm)
+        d.mergeCandidate?.mergeHover = false
+        d.mergeCandidate = null
+        d.merging = false
+    }
+
     private fun updateTarget(x: Float, y: Float) {
         val d = drag ?: return
         d.x = x; d.y = y
+        // Hovering right over another icon: after a moment, dropping makes (or adds to) a folder.
+        if (!Folder.isFolder(d.key)) {
+            val hover = home.iconNearCenter(x, y)
+            if (hover != null && hover.itemKey != d.key) {
+                if (d.mergeCandidate !== hover) {
+                    clearMerge(d)
+                    d.mergeCandidate = hover
+                    handler.postDelayed(mergeArm, 380)
+                }
+                return
+            }
+            if (d.mergeCandidate != null) clearMerge(d)
+        }
         val dir = home.edgeDir(x, y)
         if (dir != d.edgeDir) {
             d.edgeDir = dir
@@ -853,16 +1079,20 @@ class LauncherActivity : Activity(), IconHost {
         val dv: List<String?> =
             if (t != null && t.dock && !t.swap) dock.toMutableList<String?>().also { it.add(min(t.index, it.size), null) }
             else dock
-        home.bind(pv, dv, repo.byKey)
+        home.bind(pv, dv, repo.byKey, folders)
     }
 
     private fun drop(commit: Boolean) {
         val d = drag ?: return
         drag = null
         handler.removeCallbacks(edgeFlip)
+        val mergeInto = if (commit && d.merging) d.mergeCandidate?.itemKey else null
+        clearMerge(d)
         val t = if (commit) d.target else null
         var placed = true
+        var landKey = d.key
         when {
+            mergeInto != null -> landKey = mergeInto(mergeInto, d.key)
             t == null -> placed = restore(d.key, d)
             t.dock && t.swap -> {
                 val i = t.index.coerceIn(0, dock.size - 1)
@@ -877,14 +1107,16 @@ class LauncherActivity : Activity(), IconHost {
                 p.add(min(t.index, p.size), d.key)
             }
         }
+        tidyFolders()
         normalize()
         save()
         bindAll()
+        drawer.refresh()
         home.buzz(HapticFeedbackConstants.VIRTUAL_KEY)
 
         val f = d.floater
         root.onNextPreDraw {
-            val v = if (placed) home.viewFor(d.key) else null
+            val v = if (placed) home.viewFor(landKey) else null
             if (v == null || Motion.reduced) {
                 if (v == null && !Motion.reduced) {
                     f.animate().alpha(0f).scaleX(0.6f).scaleY(0.6f).setDuration(200)
@@ -911,7 +1143,10 @@ class LauncherActivity : Activity(), IconHost {
 
     /** Put [key] back where the dragged app came from. Returns false if it came from the drawer. */
     private fun restore(key: String, d: Drag, fallbackPage: Int = -1): Boolean {
+        val of = d.originFolder
         when {
+            of != null && folders.containsKey(of.key) && key == d.key -> of.items.add(min(d.originIndex.coerceAtLeast(0), of.items.size), key)
+            of != null -> pages[home.pager.current.coerceIn(0, pages.size - 1)].add(key) // its folder dissolved
             d.originDock -> dock.add(min(d.originIndex, dock.size), key)
             d.originPage >= 0 -> {
                 val p = pages.getOrNull(d.originPage) ?: pages.last()
@@ -926,10 +1161,335 @@ class LauncherActivity : Activity(), IconHost {
         return true
     }
 
+    // ------------------------------------------------------------ folders
+
+    /** Drop [dragged] onto [target]: make a folder of the two, or add to the folder. Returns the folder's key. */
+    private fun mergeInto(target: String, dragged: String): String {
+        val existing = folders[target]
+        if (existing != null) {
+            if (dragged !in existing.items) existing.items.add(dragged)
+            return existing.key
+        }
+        val id = java.lang.Long.toString(System.currentTimeMillis(), 36)
+        val f = Folder(id, folderName(target, dragged), mutableListOf(target, dragged))
+        folders[f.key] = f
+        val di = dock.indexOf(target)
+        if (di >= 0) dock[di] = f.key
+        else for (p in pages) {
+            val i = p.indexOf(target)
+            if (i >= 0) {
+                p[i] = f.key; break
+            }
+        }
+        return f.key
+    }
+
+    /** A sensible first name from what the two apps are (Games, Social…). */
+    private fun folderName(a: String, b: String): String {
+        fun cat(k: String): Int {
+            val app = repo.byKey[k] ?: return -1
+            return try {
+                packageManager.getApplicationInfo(app.packageName, 0).category
+            } catch (e: Exception) {
+                -1
+            }
+        }
+        val c = cat(a)
+        if (c >= 0 && c == cat(b)) {
+            val t = android.content.pm.ApplicationInfo.getCategoryTitle(this, c)
+            if (!t.isNullOrBlank()) return t.toString()
+        }
+        return "Folder"
+    }
+
+    override fun onFolderClick(v: AppIconView) {
+        if (editing) return
+        v.buzz(HapticFeedbackConstants.VIRTUAL_KEY)
+        openFolder(v, rename = false)
+    }
+
+    private fun openFolder(v: AppIconView, rename: Boolean) {
+        val f = v.folder ?: return
+        folderView?.close(false)
+        val o = FolderOverlay(this, f, v.iconRectOnScreen(), repo.byKey, rename)
+        folderView = o
+        overlay.addView(o, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        o.show()
+    }
+
+    fun onFolderClosed(o: FolderOverlay) {
+        overlay.removeView(o)
+        if (folderView === o) folderView = null
+        tidyFolders()
+        save()
+        bindAll()
+    }
+
+    fun renameFolder(f: Folder, name: String) {
+        val n = name.trim()
+        if (n.isNotEmpty() && n != f.name) {
+            f.name = n
+            save()
+        }
+    }
+
+    private fun ungroup(f: Folder) {
+        val key = f.key
+        fun spill(list: MutableList<String>): Boolean {
+            val i = list.indexOf(key)
+            if (i < 0) return false
+            list.removeAt(i)
+            list.addAll(i, f.items.filter { !isOnHomeExcept(it, key) })
+            return true
+        }
+        if (!spill(dock)) for (p in pages) if (spill(p)) break
+        folders.remove(key)
+        normalize()
+        save()
+        bindAll()
+    }
+
+    private fun isOnHomeExcept(k: String, folderKey: String) =
+        k in dock || pages.any { k in it } || folders.values.any { it.key != folderKey && k in it.items }
+
+    private fun removeFromFolder(key: String) {
+        val f = folders.values.firstOrNull { key in it.items } ?: return
+        f.items.remove(key)
+        // The app goes back on the home screen right after the folder.
+        val p = pages.firstOrNull { f.key in it }
+        if (p != null) p.add(p.indexOf(f.key) + 1, key) else addToHome(key)
+        tidyFolders()
+        normalize()
+        save()
+        bindAll()
+    }
+
+    // ------------------------------------------------------------ two-finger swipe
+
+    fun onTwoFingerSwipeDown() {
+        home.buzz()
+        when (Prefs.twoFingerDown) {
+            "search" -> openDrawer(focusSearch = true)
+            "notifications" -> expandNotifications()
+            "quick_settings" -> expandQuickSettings()
+        }
+    }
+
+    private fun expandQuickSettings() {
+        try {
+            val sbs = getSystemService("statusbar")
+            Class.forName("android.app.StatusBarManager").getMethod("expandSettingsPanel").invoke(sbs)
+        } catch (e: Throwable) {
+            expandNotifications()
+        }
+    }
+
+    // ------------------------------------------------------------ Android widgets
+
+    fun createWidgetView(id: Int): AppWidgetHostView? {
+        val info = widgetManager.getAppWidgetInfo(id) ?: return null
+        return try {
+            widgetHost.createView(this, id, info).also { it.setPadding(0, 0, 0, 0) }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun setWidgetProgress(p: Float) {
+        widgetProgress = p
+        widgetPanel.setProgress(p)
+        if (drawerProgress > 0.01f) return
+        val q = p.coerceIn(0f, 1f)
+        val s = 1f - 0.08f * q
+        home.scaleX = s
+        home.scaleY = s
+        home.alpha = 1f - 0.6f * q
+        home.translationX = 40.dpf * q
+        val r = 12.dpf * q
+        if (Prefs.glass && r > 0.5f) home.setRenderEffect(RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP))
+        else home.setRenderEffect(null)
+    }
+
+    private fun animateWidgets(to: Float) {
+        widgetAnim?.cancel()
+        if (Motion.reduced) {
+            setWidgetProgress(to); return
+        }
+        widgetAnim = ValueAnimator.ofFloat(widgetProgress, to).apply {
+            duration = if (to > widgetProgress) 520 else 380
+            interpolator = if (to > widgetProgress) Ease.sheet else Ease.out
+            addUpdateListener { setWidgetProgress(it.animatedValue as Float) }
+            start()
+        }
+    }
+
+    fun openWidgets() {
+        if (editing) exitEdit()
+        widgetPanel.rebuild()
+        animateWidgets(1f)
+    }
+
+    fun closeWidgets(animate: Boolean = true) {
+        if (animate) animateWidgets(0f) else {
+            widgetAnim?.cancel(); setWidgetProgress(0f)
+        }
+    }
+
+    /** [fromPanel]: the drag started on the open panel (closing) rather than on home (opening). */
+    fun endWidgetDrag(vx: Float, fromPanel: Boolean) {
+        val open = if (fromPanel) !(vx < -700 || widgetProgress < 0.7f) else (vx > 700 || widgetProgress > 0.3f)
+        if (open && widgetProgress < 1f && !fromPanel) widgetPanel.rebuild()
+        animateWidgets(if (open) 1f else 0f)
+    }
+
+    fun pickWidget() {
+        val providers = try {
+            widgetManager.installedProviders
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val density = resources.displayMetrics.densityDpi
+        val pm = packageManager
+        val s = openSheet("Add a widget")
+        if (providers.isEmpty()) s.message("No apps on this phone offer widgets.")
+        val appName = { p: AppWidgetProviderInfo ->
+            try {
+                pm.getApplicationLabel(pm.getApplicationInfo(p.provider.packageName, 0)).toString()
+            } catch (e: Exception) {
+                p.provider.packageName
+            }
+        }
+        for (p in providers.sortedWith(compareBy({ appName(it).lowercase() }, { it.loadLabel(pm).lowercase() }))) {
+            val icon = try {
+                p.loadIcon(this, density)
+            } catch (e: Exception) {
+                null
+            }
+            val dm = resources.displayMetrics.density
+            val size = "${(p.minWidth / dm).toInt()} × ${(p.minHeight / dm).toInt()}"
+            s.row(Glyphs.WIDGETS, icon, p.loadLabel(pm), "${appName(p)} · $size") { addWidget(p) }
+        }
+    }
+
+    private fun addWidget(info: AppWidgetProviderInfo) {
+        val id = widgetHost.allocateAppWidgetId()
+        pendingWidget = Pair(id, info)
+        val bound = try {
+            widgetManager.bindAppWidgetIdIfAllowed(id, info.profile, info.provider, null)
+        } catch (e: Exception) {
+            false
+        }
+        if (bound) {
+            configureOrAdd(id, info)
+        } else {
+            val i = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, info.profile)
+            try {
+                startActivityForResult(i, REQ_BIND)
+            } catch (e: Exception) {
+                widgetHost.deleteAppWidgetId(id)
+                toast("Couldn't add that widget")
+            }
+        }
+    }
+
+    private fun configureOrAdd(id: Int, info: AppWidgetProviderInfo) {
+        val optional = (info.widgetFeatures and AppWidgetProviderInfo.WIDGET_FEATURE_CONFIGURATION_OPTIONAL) != 0
+        if (info.configure != null && !optional) {
+            try {
+                widgetHost.startAppWidgetConfigureActivityForResult(this, id, 0, REQ_CONFIGURE, null)
+                return
+            } catch (e: Exception) {
+            }
+        }
+        finishAddWidget(id, info)
+    }
+
+    private fun finishAddWidget(id: Int, info: AppWidgetProviderInfo) {
+        pendingWidget = null
+        val dm = resources.displayMetrics.density
+        val h = (info.minHeight / dm).toInt().coerceIn(110, 360) + 16
+        widgets.add(Pair(id, h))
+        Prefs.saveWidgets(widgets)
+        widgetPanel.rebuild()
+        if (widgetProgress < 0.5f) openWidgets()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val p = pendingWidget ?: return
+        when (requestCode) {
+            REQ_BIND -> if (resultCode == RESULT_OK) configureOrAdd(p.first, p.second) else {
+                widgetHost.deleteAppWidgetId(p.first); pendingWidget = null
+            }
+            REQ_CONFIGURE -> if (resultCode == RESULT_OK) finishAddWidget(p.first, p.second) else {
+                widgetHost.deleteAppWidgetId(p.first); pendingWidget = null
+            }
+        }
+    }
+
+    fun showWidgetMenu(frame: WidgetFrame) {
+        val i = widgets.indexOfFirst { it.first == frame.widgetId }
+        if (i < 0) return
+        val r = Rect()
+        frame.getGlobalVisibleRect(r)
+        fun resize(by: Int) {
+            val (id, h) = widgets[i]
+            widgets[i] = Pair(id, (h + by).coerceIn(90, 560))
+            Prefs.saveWidgets(widgets)
+            widgetPanel.rebuild()
+        }
+        fun move(by: Int) {
+            val j = (i + by).coerceIn(0, widgets.size - 1)
+            if (j == i) return
+            val w = widgets.removeAt(i)
+            widgets.add(j, w)
+            Prefs.saveWidgets(widgets)
+            widgetPanel.rebuild()
+        }
+        val items = ArrayList<MenuEntry>()
+        items += MenuEntry("Taller", Glyphs.CHEVRON_DOWN) { resize(60) }
+        items += MenuEntry("Shorter", Glyphs.CHEVRON_UP) { resize(-60) }
+        if (i > 0) items += MenuEntry("Move up", Glyphs.ARROW_UP) { move(-1) }
+        if (i < widgets.size - 1) items += MenuEntry("Move down", Glyphs.ARROW_DOWN) { move(1) }
+        items += MenuEntry("Remove widget", Glyphs.TRASH, danger = true) {
+            widgetHost.deleteAppWidgetId(frame.widgetId)
+            widgets.removeAt(i)
+            Prefs.saveWidgets(widgets)
+            widgetPanel.rebuild()
+        }
+        menu?.dismiss(false)
+        val m = MenuOverlay(this, null, r.exactCenterX(), r.exactCenterY(), listOf(items))
+        menu = m
+        overlay.addView(m, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        m.show()
+    }
+
+    // ------------------------------------------------------------ sheets
+
+    fun openSheet(title: String): GlassSheet {
+        sheet?.let { overlay.removeView(it) }
+        val s = GlassSheet(this, title, insets.bottom) { gone ->
+            overlay.removeView(gone)
+            if (sheet === gone) sheet = null
+        }
+        sheet = s
+        overlay.addView(s, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        s.show()
+        return s
+    }
+
     companion object {
         const val DOCK_MAX = 4
+        private const val WIDGET_HOST_ID = 2048
+        private const val REQ_BIND = 31
+        private const val REQ_CONFIGURE = 32
         private const val REQ_LOCATION = 11
         private const val REQ_CALENDAR = 12
+        private const val REQ_CONTACTS = 13
 
         fun requestDefaultHome(a: Activity) {
             val rm = a.getSystemService(RoleManager::class.java)

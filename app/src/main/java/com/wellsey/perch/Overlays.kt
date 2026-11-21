@@ -293,3 +293,101 @@ class PromptCard(
         animate().alpha(0f).translationY(30.dpf).setDuration(220).withEndAction { onGone(this) }.start()
     }
 }
+
+/** A glass bottom sheet with a title and rows, over a dim scrim. */
+@SuppressLint("ViewConstructor")
+class GlassSheet(context: android.content.Context, title: String, private val bottomInset: Int, private val onGone: (GlassSheet) -> Unit) :
+    FrameLayout(context) {
+    private val scrim = View(context)
+    private val card = LinearLayout(context)
+    val body = LinearLayout(context)
+    private var closing = false
+
+    init {
+        scrim.setBackgroundColor(0x66000000)
+        scrim.setOnClickListener { close() }
+        addView(scrim, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        card.orientation = LinearLayout.VERTICAL
+        card.background = Glass(card, 28.dpf, 0x40FFFFFF, 0xF2262A40.toInt(), border = 0x52FFFFFF, highlight = 0x73FFFFFF)
+        card.clipToOutline = true
+        card.glassShadow(16)
+        card.isClickable = true
+        card.addView(label(context, 17f, Fonts.semibold).apply {
+            text = title
+            setPadding(20.dp, 20.dp, 20.dp, 12.dp)
+        })
+        body.orientation = LinearLayout.VERTICAL
+        val scroll = android.widget.ScrollView(context)
+        scroll.isVerticalScrollBarEnabled = false
+        scroll.addView(body)
+        val maxH = (context.resources.displayMetrics.heightPixels * 0.62f).toInt()
+        card.addView(object : FrameLayout(context) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(maxH, MeasureSpec.AT_MOST))
+            }
+        }.apply { addView(scroll) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        card.setPadding(0, 0, 0, 10.dp)
+        addView(card, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM).apply {
+            setMargins(12.dp, 0, 12.dp, bottomInset + 12.dp)
+        })
+    }
+
+    fun row(glyph: String?, icon: Drawable?, title: String, subtitle: String?, danger: Boolean = false, click: () -> Unit) {
+        if (body.childCount > 0) body.addView(View(context).apply { setBackgroundColor(0x24FFFFFF) },
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1).apply { marginStart = 20.dp })
+        val r = LinearLayout(context)
+        r.orientation = LinearLayout.HORIZONTAL
+        r.gravity = Gravity.CENTER_VERTICAL
+        r.setPadding(20.dp, 8.dp, 18.dp, 8.dp)
+        r.minimumHeight = 54.dp
+        r.isClickable = true
+        r.background = StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), ColorDrawable(0x1FFFFFFF))
+            addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
+        }
+        val color = if (danger) 0xFFFFC2BD.toInt() else Color.WHITE
+        if (icon != null) r.addView(ImageView(context).apply { setImageDrawable(icon); scaleType = ImageView.ScaleType.FIT_CENTER },
+            LinearLayout.LayoutParams(36.dp, 36.dp).apply { marginEnd = 14.dp })
+        else if (glyph != null) r.addView(GlyphView(context, glyph, 20, color), LinearLayout.LayoutParams(22.dp, 22.dp).apply { marginEnd = 14.dp })
+        val texts = LinearLayout(context)
+        texts.orientation = LinearLayout.VERTICAL
+        texts.addView(label(context, 16f, Fonts.regular, 1f, color).apply { text = title })
+        if (!subtitle.isNullOrEmpty()) texts.addView(label(context, 13f, Fonts.regular, 0.7f).apply { text = subtitle },
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = 2.dp })
+        r.addView(texts, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        r.setOnClickListener {
+            r.buzz()
+            close()
+            click()
+        }
+        body.addView(r, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    }
+
+    fun message(text: String) {
+        body.addView(TextView(context).apply {
+            this.text = text
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            alpha = 0.8f
+            setLineSpacing(2.dpf, 1f)
+            setPadding(20.dp, 0, 20.dp, 12.dp)
+        })
+    }
+
+    fun show() {
+        if (Motion.reduced) return
+        scrim.alpha = 0f
+        scrim.animate().alpha(1f).setDuration(250).start()
+        card.translationY = 500.dpf
+        card.animate().translationY(0f).setDuration(450).setInterpolator(Ease.sheet).start()
+    }
+
+    fun close() {
+        if (closing) return
+        closing = true
+        if (Motion.reduced) {
+            onGone(this); return
+        }
+        animate().alpha(0f).setDuration(180).withEndAction { onGone(this) }.start()
+    }
+}

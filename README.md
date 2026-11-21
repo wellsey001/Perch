@@ -22,6 +22,16 @@
 | ✏️ **Edit mode** | Icons jiggle; drag them around, into the dock, or to the screen edge for another page. Tap Done (or empty space) to finish. |
 | 🌀 **Motion** | Icons spring in, launches zoom from the icon, sheets glide. Turn on *Remove animations* in Android's accessibility settings and Perch keeps still. |
 | ⚙️ **Settings** | Wallpaper, grid size, switches for the search bar, widgets, glass and haptics, gestures, hidden apps, and set-as-default. |
+| 📁 **Folders** | Hold an app over another for a moment and drop it to make a folder. Tap to open a glass panel; rename it, drag apps out. |
+| 🧩 **Real widgets** | Swipe right on the first page (or long-press empty space › Widgets) for a panel of any app's Android widgets, in glass frames. Long-press one to resize, move or remove it. |
+| 🔴 **Notification dots** | Counts on icons and folders (needs notification access; Perch never reads what they say). |
+| 🎵 **At a Glance** | Under the date: what's playing, charging status, or your next alarm. Tap to jump there. |
+| 🎨 **Themed icons** | Optional one-colour icons tinted to match your wallpaper. Glass gets darker over bright wallpapers and at night. |
+| 🔎 **Search everything** | Apps, app shortcuts, contacts, settings pages and quick sums (`12*4`, `15% of 80`), plus web search. |
+| 🔤 **Drawer extras** | A–Z scroller, a Work tab for work-profile apps, and a "New" row for apps installed in the last few days. |
+| ✌️ **More gestures** | Pinch to edit, two-finger swipe down for quick settings, optional swipe up on an app for its shortcuts. |
+| ⚡ **Instant start** | Keeps a snapshot of your apps and icons, so the home screen appears at once after a restart. |
+| 💾 **Backup** | Save your layout and settings to a file and restore them later or on a new phone. |
 | 🪶 **Tiny** | Pure Kotlin, zero third-party libraries. |
 
 ## 📲 Install
@@ -59,7 +69,9 @@ Perch frosts the wallpaper itself, so the glass works on any phone running Andro
 | Calendar | Your next event (asked when you tap the widget) |
 | Set wallpaper | Perch's own wallpapers |
 | All files access (optional) | Read your current wallpaper so the glass can frost it |
-| Expand status bar | Swipe down for notifications |
+| Expand status bar | Swipe down for notifications / quick settings |
+| Contacts (optional) | Contacts in search |
+| Notification access (optional) | Notification dots, and music in At a Glance |
 | Request uninstall | Uninstall from the long-press menu |
 
 ## 🛠️ Build it yourself

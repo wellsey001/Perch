@@ -46,6 +46,27 @@ object Backdrop {
         private set
     var screenH = 2400
         private set
+    /** How wide the wallpaper is on screen (wider than the screen when it pans with pages). */
+    var coverW = 1080
+        private set
+    /** Average brightness of the wallpaper, 0..1, or -1 if unknown. */
+    var luminance = -1f
+        private set
+    /** Where the wallpaper is panned to (0 = left, 0.5 = centre, 1 = right). */
+    var panX = 0.5f
+        private set
+
+    private val glasses = java.util.Collections.newSetFromMap(java.util.WeakHashMap<Glass, Boolean>())
+
+    fun register(g: Glass) {
+        glasses.add(g)
+    }
+
+    fun setPan(x: Float) {
+        if (x == panX) return
+        panX = x
+        if (blurred != null && coverW > screenW) for (g in glasses.toList()) g.invalidateSelf()
+    }
 
     private val listeners = ArrayList<() -> Unit>()
     private val exec = Executors.newSingleThreadExecutor()
@@ -79,10 +100,14 @@ object Backdrop {
             } catch (e: Throwable) {
                 null
             }
+            val lum = result?.let { averageLuminance(it.first) } ?: -1f
             main.post {
                 if (gen == generation) {
-                    blurred = result
+                    blurred = result?.first
+                    coverW = result?.second ?: w
+                    luminance = lum
                     source = if (result == null && src != Source.LIVE) Source.NO_ACCESS else src
+                    Theme.update(app)
                     listeners.toList().forEach { it() }
                 }
             }
@@ -129,9 +154,34 @@ object Backdrop {
         return b
     }
 
-    /** Centre-crop to the screen (how the system shows it), shrink, saturate and blur. */
-    private fun process(src: Bitmap, w: Int, h: Int): Bitmap {
-        val sw = max(1, w / SCALE)
+    private fun averageLuminance(b: Bitmap): Float {
+        var sum = 0.0
+        var n = 0
+        val stepX = max(1, b.width / 24)
+        val stepY = max(1, b.height / 48)
+        var y = 0
+        while (y < b.height) {
+            var x = 0
+            while (x < b.width) {
+                val c = b.getPixel(x, y)
+                sum += (0.2126 * Color.red(c) + 0.7152 * Color.green(c) + 0.0722 * Color.blue(c)) / 255.0
+                n++
+                x += stepX
+            }
+            y += stepY
+        }
+        return if (n == 0) -1f else (sum / n).toFloat()
+    }
+
+    /**
+     * Scale to fill the screen height (how the system shows it). A wallpaper wider than the screen
+     * keeps its full width, so it can pan with the home pages. Then shrink, saturate and blur.
+     * Returns the blurred bitmap and its on-screen width.
+     */
+    private fun process(src: Bitmap, w: Int, h: Int): Pair<Bitmap, Int> {
+        val fill = max(w.toFloat() / src.width, h.toFloat() / src.height)
+        val coverWidth = max(w, (src.width * fill).toInt())
+        val sw = max(1, coverWidth / SCALE)
         val sh = max(1, h / SCALE)
         var cur = src
         while (cur.width > sw * 4 && cur.height > sh * 4) {
@@ -158,7 +208,7 @@ object Backdrop {
             blurV(tmp, px, sw, sh, RADIUS)
         }
         out.setPixels(px, 0, sw, 0, 0, sw, sh)
-        return out
+        return Pair(out, coverWidth)
     }
 
     private fun blurH(src: IntArray, dst: IntArray, w: Int, h: Int, r: Int) {
@@ -254,6 +304,7 @@ class Glass(
             }
         })
         if (host.isAttachedToWindow) host.viewTreeObserver.addOnPreDrawListener(preDraw)
+        Backdrop.register(this)
     }
 
     override fun onBoundsChange(bounds: Rect) {
@@ -287,14 +338,21 @@ class Glass(
             host.getLocationOnScreen(loc)
             last[0] = loc[0]
             last[1] = loc[1]
-            matrix.setScale(Backdrop.screenW.toFloat() / blur.width, Backdrop.screenH.toFloat() / blur.height)
-            matrix.postTranslate(-loc[0].toFloat(), -loc[1].toFloat())
+            val pan = (Backdrop.coverW - Backdrop.screenW) * Backdrop.panX
+            matrix.setScale(Backdrop.coverW.toFloat() / blur.width, Backdrop.screenH.toFloat() / blur.height)
+            matrix.postTranslate(-loc[0].toFloat() - pan, -loc[1].toFloat())
             c.drawBitmap(blur, matrix, bmpPaint)
             fill.color = glassTint
+            c.drawRect(rect, fill)
+            val shade = Theme.shade
+            if (Color.alpha(shade) > 0) {
+                fill.color = shade
+                c.drawRect(rect, fill)
+            }
         } else {
             fill.color = solid
+            c.drawRect(rect, fill)
         }
-        c.drawRect(rect, fill)
         c.restore()
 
         val sw = max(1f, 1.dpf)
