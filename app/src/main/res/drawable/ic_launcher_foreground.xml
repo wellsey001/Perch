@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- branch -->
+    <path android:pathData="M30,73L80,67"
+        android:strokeColor="#CCFFFFFF" android:strokeWidth="4" android:strokeLineCap="round" />
+    <!-- tail -->
+    <path android:fillColor="#FFFFFF" android:pathData="M45,62L31,70L34,62L45,56Z" />
+    <!-- body and head -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M42,60C42,47 51,39 61,39C69,39 75,45 75,52C75,62 67,68 57,68L49,68C45,68 42,64.5 42,60Z" />
+    <!-- wing -->
+    <path android:pathData="M50,55C53,62 60,63 65,58"
+        android:strokeColor="#A5B4FC" android:strokeWidth="2.6" android:strokeLineCap="round" />
+    <!-- eye -->
+    <path android:fillColor="#1B1446" android:pathData="M65,49m-2.2,0a2.2,2.2 0,1 1,4.4 0a2.2,2.2 0,1 1,-4.4 0" />
+    <!-- beak -->
+    <path android:fillColor="#FBBF24" android:pathData="M74.5,50.5L81,53L74.5,55.5Z" />
+    <!-- feet -->
+    <path android:pathData="M54,68L53,71M60,68L59.5,70.5"
+        android:strokeColor="#FBBF24" android:strokeWidth="1.8" android:strokeLineCap="round" />
+</vector>
