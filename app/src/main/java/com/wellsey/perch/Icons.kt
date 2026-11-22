@@ -459,7 +459,9 @@ class AppGrid(context: Context, private val host: IconHost, val place: Place) : 
             cellH = cellHeight
             h = n * cellH
         }
-        val labelSpace = if (showLabels) 30.dp else 6.dp
+        // Very packed grids drop the names rather than squash icons and text together.
+        val labels = showLabels && cellH >= 70.dp
+        val labelSpace = if (labels) 30.dp else 6.dp
         val icon = max(24.dp, min(maxIcon, min(cellW - 14.dp, cellH - labelSpace)))
         if (icon != iconSizeUsed) {
             iconSizeUsed = icon
@@ -469,7 +471,7 @@ class AppGrid(context: Context, private val host: IconHost, val place: Place) : 
         val hs = MeasureSpec.makeMeasureSpec(cellH, MeasureSpec.EXACTLY)
         for (v in views.values) {
             v.iconSize = icon
-            v.showLabel = showLabels
+            v.showLabel = labels
             v.measure(ws, hs)
         }
         setMeasuredDimension(w, h)

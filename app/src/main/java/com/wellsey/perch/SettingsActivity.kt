@@ -171,7 +171,16 @@ class SettingsActivity : Activity() {
         // Layout and gestures
         list.addView(sectionTitle("Layout and gestures"))
         val gc = card()
-        gc.addView(row(Glyphs.GRID, 0xFF64748B.toInt(), "Grid size", "${Prefs.columns} × ${Prefs.rows}", divider = false) { pickGrid() })
+        gc.addView(row(Glyphs.GRID, 0xFF64748B.toInt(), "Columns", "${Prefs.columns} across", divider = false) {
+            choose("Apps across each row", (3..6).map { "$it" to "$it" }, "${Prefs.columns}") { Prefs.columns = it.toInt() }
+        })
+        gc.addView(row(Glyphs.GRID, 0xFF64748B.toInt(), "Rows", "${Prefs.rows} down") {
+            choose(
+                "Rows on each page",
+                (3..8).map { "$it" to (if (it >= 7) "$it (icons get smaller; turn off Weather and calendar for more room)" else "$it") },
+                "${Prefs.rows}",
+            ) { Prefs.rows = it.toInt() }
+        })
         gc.addView(row(Glyphs.ARROW_UP, 0xFF0EA5E9.toInt(), "Swipe up", gestureName(Prefs.swipeUp)) {
             choose("Swipe up on home", listOf("drawer" to "All apps", "search" to "Search", "none" to "Nothing"), Prefs.swipeUp) {
                 Prefs.swipeUp = it
@@ -505,14 +514,6 @@ class SettingsActivity : Activity() {
         toast("Frosting your wallpaper")
     }
 
-    private fun pickGrid() {
-        val options = listOf("4x4" to "4 × 4", "4x5" to "4 × 5", "4x6" to "4 × 6", "5x5" to "5 × 5", "5x6" to "5 × 6")
-        choose("Grid size", options, "${Prefs.columns}x${Prefs.rows}") {
-            val p = it.split("x")
-            Prefs.columns = p[0].toInt()
-            Prefs.rows = p[1].toInt()
-        }
-    }
 
     private fun explainDots() {
         info(
