@@ -300,7 +300,7 @@ object CalendarSource {
 open class WidgetCard(context: Context) : LinearLayout(context) {
     init {
         orientation = VERTICAL
-        background = Glass(this, 28.dpf, 0x29FFFFFF, 0x38FFFFFF)
+        background = Glass(this, 28.dpf, 0x29FFFFFF, 0x38FFFFFF, depth = 0)
         glassShadow(8)
         setPadding(16.dp, 16.dp, 16.dp, 15.dp)
         isClickable = true

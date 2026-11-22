@@ -27,7 +27,7 @@ class WidgetPanel(private val act: LauncherActivity) : FrameLayout(act) {
     private val bg = View(act)
     private val scroll = ScrollView(act)
     private val list = LinearLayout(act)
-    private val views = HashMap<Int, AppWidgetHostView>()
+    private val views = HashMap<Int, View>()
     private var insets: Insets = Insets.NONE
     private val slop = ViewConfiguration.get(act).scaledTouchSlop
     private var downX = 0f
@@ -37,7 +37,7 @@ class WidgetPanel(private val act: LauncherActivity) : FrameLayout(act) {
 
     init {
         visibility = INVISIBLE
-        bg.background = Glass(bg, 0f, 0x590A0C1E, 0xF20F1224.toInt(), border = 0, highlight = 0)
+        bg.background = Glass(bg, 0f, 0x590A0C1E, 0xF20F1224.toInt(), border = 0, highlight = 0, depth = 2)
         addView(bg, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         list.orientation = LinearLayout.VERTICAL
         list.clipChildren = false
@@ -96,7 +96,7 @@ class WidgetPanel(private val act: LauncherActivity) : FrameLayout(act) {
         val add = LinearLayout(act)
         add.orientation = LinearLayout.HORIZONTAL
         add.gravity = Gravity.CENTER
-        add.background = Glass(add, 24.dpf, 0x33FFFFFF, 0x40FFFFFF, border = 0x52FFFFFF)
+        add.background = Glass(add, 24.dpf, 0x33FFFFFF, 0x40FFFFFF, border = 0x52FFFFFF, depth = 2)
         add.isClickable = true
         add.contentDescription = "Add widget"
         add.springPress(0.96f)
@@ -165,7 +165,7 @@ class WidgetPanel(private val act: LauncherActivity) : FrameLayout(act) {
 
 /** A glass frame around one widget. Long-press it to resize, move or remove it. */
 @SuppressLint("ViewConstructor")
-class WidgetFrame(private val act: LauncherActivity, val widgetId: Int, private val hostView: AppWidgetHostView) : FrameLayout(act) {
+class WidgetFrame(private val act: LauncherActivity, val widgetId: Int, private val hostView: View) : FrameLayout(act) {
     private var downX = 0f
     private var downY = 0f
     private var fired = false
@@ -177,7 +177,7 @@ class WidgetFrame(private val act: LauncherActivity, val widgetId: Int, private 
     }
 
     init {
-        background = Glass(this, 24.dpf, 0x29FFFFFF, 0x33FFFFFF, border = 0x47FFFFFF, highlight = 0x59FFFFFF)
+        background = Glass(this, 24.dpf, 0x29FFFFFF, 0x33FFFFFF, border = 0x47FFFFFF, highlight = 0x59FFFFFF, depth = 2)
         clipToOutline = true
         glassShadow(8)
         addView(hostView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -187,7 +187,7 @@ class WidgetFrame(private val act: LauncherActivity, val widgetId: Int, private 
         super.onSizeChanged(w, h, oldw, oldh)
         val d = resources.displayMetrics.density
         try {
-            hostView.updateAppWidgetSize(Bundle(), listOf(SizeF(w / d, h / d)))
+            (hostView as? AppWidgetHostView)?.updateAppWidgetSize(Bundle(), listOf(SizeF(w / d, h / d)))
         } catch (e: Exception) {
         }
     }

@@ -73,6 +73,7 @@ class LauncherActivity : Activity(), IconHost {
     private var lastLaunchKey: String? = null
     private var iconMode: Pair<Int, Int>? = null
     private lateinit var glance: Glance
+    private lateinit var moodScrim: View
 
     // Android widgets
     lateinit var widgetHost: AppWidgetHost
@@ -111,6 +112,11 @@ class LauncherActivity : Activity(), IconHost {
         widgetPanel = WidgetPanel(this)
         drawer = DrawerView(this)
         overlay = FrameLayout(this)
+        // Dims the wallpaper a touch late at night (time-of-day mood).
+        moodScrim = View(this)
+        moodScrim.setBackgroundColor(0xFF05050F.toInt())
+        moodScrim.alpha = 0f
+        stage.addView(moodScrim, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         stage.addView(home, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         stage.addView(widgetPanel, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         stage.addView(drawer, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -207,6 +213,8 @@ class LauncherActivity : Activity(), IconHost {
         }
         glance.connectMedia()
         glance.refresh()
+        applyMood()
+        Tilt.start(this)
         returnToIcon()
         drawer.refresh()
         home.updateClock()
@@ -223,6 +231,7 @@ class LauncherActivity : Activity(), IconHost {
 
     override fun onPause() {
         super.onPause()
+        Tilt.stop()
         resumed = false
     }
 
@@ -300,6 +309,13 @@ class LauncherActivity : Activity(), IconHost {
         Backdrop.setPan(x)
     }
 
+    /** Time-of-day mood: glass tint (drawn by each panel) and a gentle wallpaper dim at night. */
+    private fun applyMood() {
+        val dim = Theme.wallpaperDim
+        if (Motion.reduced) moodScrim.alpha = dim else moodScrim.animate().alpha(dim).setDuration(1200).start()
+        Backdrop.invalidateAll()
+    }
+
     /** Coming back from an app: its icon settles back into place. */
     private fun returnToIcon() {
         val key = lastLaunchKey
@@ -336,7 +352,11 @@ class LauncherActivity : Activity(), IconHost {
     private val timeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             home.updateClock()
-            if (++ticks % 15 == 0 || intent.action != Intent.ACTION_TIME_TICK) refreshWidgets(false)
+            if (++ticks % 15 == 0 || intent.action != Intent.ACTION_TIME_TICK) {
+                refreshWidgets(false)
+                refreshSuggestions()
+                applyMood()
+            }
         }
     }
 
@@ -459,6 +479,22 @@ class LauncherActivity : Activity(), IconHost {
 
     private fun bindAll() {
         home.bind(pages, dock, repo.byKey, folders)
+        refreshSuggestions()
+    }
+
+    /** The smart row: what you usually open at this time of day, minus what's already in the dock. */
+    private fun refreshSuggestions() {
+        if (!repo.loaded) return
+        val skip = HashSet<String>(dock)
+        for (f in folders.values) if (f.key in dock) skip.addAll(f.items)
+        val hidden = Prefs.hidden
+        val candidates = repo.apps.filter { it.key !in skip && it.key !in hidden && it.packageName != packageName }
+        val now = candidates.map { it to Prefs.launchesNow(it.key) }.filter { it.second > 0 }
+            .sortedByDescending { it.second }.map { it.first }
+        val overall = candidates.filter { Prefs.launchCount(it.key) > 1 && it !in now }
+            .sortedByDescending { Prefs.launchCount(it.key) }
+        val picks = (now + overall).take(DOCK_MAX).map { it.key }
+        home.showSuggestions(picks, repo.byKey)
     }
 
     fun dockKeys(): List<String> = dock
@@ -642,7 +678,7 @@ class LauncherActivity : Activity(), IconHost {
 
     fun setStageBlur(amount: Float) {
         // An open folder keeps the home screen blurred underneath a menu.
-        val f = if (folderView != null && menu != null) 1f else amount
+        val f = if (folderView != null && menu != null) 1.6f else amount
         if (Prefs.glass && f > 0.01f) {
             val r = 16.dpf * f
             stage.setRenderEffect(RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP))
@@ -702,6 +738,7 @@ class LauncherActivity : Activity(), IconHost {
         menu?.dismiss(false)
         prompt?.dismiss()
         drawer.prepare(pop = true)
+        Haptics.sheet(home)
         animateDrawer(1f)
         if (focusSearch) drawer.focusSearch()
     }
@@ -878,7 +915,8 @@ class LauncherActivity : Activity(), IconHost {
         editing = true
         if (drawerProgress > 0.01f) closeDrawer()
         home.setEditing(true)
-        home.buzz(HapticFeedbackConstants.LONG_PRESS)
+        refreshSuggestions()
+        Haptics.lift(home)
         val b = label(this, 14f, Fonts.semibold).apply {
             text = "Done"
             gravity = Gravity.CENTER
@@ -906,6 +944,7 @@ class LauncherActivity : Activity(), IconHost {
         save()
         home.setEditing(false)
         bindAll()
+        Haptics.drop(home)
         home.pager.snapTo(min(home.pager.current, pages.size - 1))
         doneButton?.let { b ->
             doneButton = null
@@ -1013,7 +1052,7 @@ class LauncherActivity : Activity(), IconHost {
         if (d != null && c != null) {
             d.merging = true
             c.mergeHover = true
-            home.buzz(HapticFeedbackConstants.VIRTUAL_KEY)
+            Haptics.tap(home)
         }
     }
 
@@ -1112,7 +1151,7 @@ class LauncherActivity : Activity(), IconHost {
         save()
         bindAll()
         drawer.refresh()
-        home.buzz(HapticFeedbackConstants.VIRTUAL_KEY)
+        if (mergeInto != null) Haptics.thump(home) else Haptics.drop(home)
 
         val f = d.floater
         root.onNextPreDraw {
@@ -1204,7 +1243,7 @@ class LauncherActivity : Activity(), IconHost {
 
     override fun onFolderClick(v: AppIconView) {
         if (editing) return
-        v.buzz(HapticFeedbackConstants.VIRTUAL_KEY)
+        Haptics.tap(v)
         openFolder(v, rename = false)
     }
 
@@ -1286,7 +1325,10 @@ class LauncherActivity : Activity(), IconHost {
 
     // ------------------------------------------------------------ Android widgets
 
-    fun createWidgetView(id: Int): AppWidgetHostView? {
+    fun createWidgetView(id: Int): View? {
+        if (PerchWidgets.isPerch(id)) {
+            return if (PerchWidgets.kind(id) == PerchWidgets.PHOTO) PhotoFrameView(this) else ClockWidgetView(this)
+        }
         val info = widgetManager.getAppWidgetInfo(id) ?: return null
         return try {
             widgetHost.createView(this, id, info).also { it.setPadding(0, 0, 0, 0) }
@@ -1351,7 +1393,8 @@ class LauncherActivity : Activity(), IconHost {
         val density = resources.displayMetrics.densityDpi
         val pm = packageManager
         val s = openSheet("Add a widget")
-        if (providers.isEmpty()) s.message("No apps on this phone offer widgets.")
+        s.row(Glyphs.CLOCK, null, "Perch clock", "Perch · glass analogue clock") { addPerchWidget(PerchWidgets.CLOCK, 170) }
+        s.row(Glyphs.IMAGE, null, "Photo frame", "Perch · photos from Immich or this phone") { addPerchWidget(PerchWidgets.PHOTO, 240) }
         val appName = { p: AppWidgetProviderInfo ->
             try {
                 pm.getApplicationLabel(pm.getApplicationInfo(p.provider.packageName, 0)).toString()
@@ -1369,6 +1412,20 @@ class LauncherActivity : Activity(), IconHost {
             val size = "${(p.minWidth / dm).toInt()} × ${(p.minHeight / dm).toInt()}"
             s.row(Glyphs.WIDGETS, icon, p.loadLabel(pm), "${appName(p)} · $size") { addWidget(p) }
         }
+    }
+
+    private fun addPerchWidget(kind: Int, heightDp: Int) {
+        widgets.add(Pair(PerchWidgets.newId(kind, widgets.map { it.first }), heightDp))
+        Prefs.saveWidgets(widgets)
+        widgetPanel.rebuild()
+        if (widgetProgress < 0.5f) openWidgets()
+    }
+
+    /** Tapping the photo frame: open Keepsake, else Immich, else the gallery. */
+    fun openPhotoApp() {
+        val app = repo.appByLabel("Keepsake") ?: repo.apps.firstOrNull { it.packageName == "app.alextran.immich" }
+        if (app != null) launch(app, null)
+        else startSafely(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_GALLERY))
     }
 
     private fun addWidget(info: AppWidgetProviderInfo) {
@@ -1451,12 +1508,17 @@ class LauncherActivity : Activity(), IconHost {
             widgetPanel.rebuild()
         }
         val items = ArrayList<MenuEntry>()
+        val view = frame.getChildAt(0)
+        if (view is PhotoFrameView) {
+            items += MenuEntry("Next photo", Glyphs.IMAGE) { view.next() }
+            items += MenuEntry("Photo frame settings", Glyphs.GEAR) { openSettings() }
+        }
         items += MenuEntry("Taller", Glyphs.CHEVRON_DOWN) { resize(60) }
         items += MenuEntry("Shorter", Glyphs.CHEVRON_UP) { resize(-60) }
         if (i > 0) items += MenuEntry("Move up", Glyphs.ARROW_UP) { move(-1) }
         if (i < widgets.size - 1) items += MenuEntry("Move down", Glyphs.ARROW_DOWN) { move(1) }
         items += MenuEntry("Remove widget", Glyphs.TRASH, danger = true) {
-            widgetHost.deleteAppWidgetId(frame.widgetId)
+            if (!PerchWidgets.isPerch(frame.widgetId)) widgetHost.deleteAppWidgetId(frame.widgetId)
             widgets.removeAt(i)
             Prefs.saveWidgets(widgets)
             widgetPanel.rebuild()

@@ -15,6 +15,7 @@ import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
@@ -36,6 +37,12 @@ import kotlin.math.min
  */
 object Backdrop {
     enum class Source { NONE, SYSTEM, PERCH, LIVE, NO_ACCESS }
+
+    /** Frosted wallpaper at three strengths: light (dock, widgets), medium, heavy (drawer, folders, menus). */
+    @Volatile
+    var levels: Array<Bitmap?> = arrayOf(null, null, null)
+        private set
+    fun level(depth: Int): Bitmap? = levels[depth.coerceIn(0, 2)]
 
     @Volatile
     var blurred: Bitmap? = null
@@ -62,6 +69,11 @@ object Backdrop {
         glasses.add(g)
     }
 
+    /** Redraw every glass panel (the tilt light or the time of day moved). */
+    fun invalidateAll() {
+        for (g in glasses.toList()) g.invalidateSelf()
+    }
+
     fun setPan(x: Float) {
         if (x == panX) return
         panX = x
@@ -74,7 +86,7 @@ object Backdrop {
     private var generation = 0
 
     private const val SCALE = 8 // blur at 1/8 size, then scale up smoothly
-    private const val RADIUS = 10
+    private val RADII = intArrayOf(5, 10, 17)
 
     fun addListener(l: () -> Unit) {
         listeners.add(l)
@@ -100,10 +112,11 @@ object Backdrop {
             } catch (e: Throwable) {
                 null
             }
-            val lum = result?.let { averageLuminance(it.first) } ?: -1f
+            val lum = result?.let { it.first[1]?.let { b -> averageLuminance(b) } ?: -1f } ?: -1f
             main.post {
                 if (gen == generation) {
-                    blurred = result?.first
+                    levels = result?.first ?: arrayOf(null, null, null)
+                    blurred = levels[1]
                     coverW = result?.second ?: w
                     luminance = lum
                     source = if (result == null && src != Source.LIVE) Source.NO_ACCESS else src
@@ -178,7 +191,7 @@ object Backdrop {
      * keeps its full width, so it can pan with the home pages. Then shrink, saturate and blur.
      * Returns the blurred bitmap and its on-screen width.
      */
-    private fun process(src: Bitmap, w: Int, h: Int): Pair<Bitmap, Int> {
+    private fun process(src: Bitmap, w: Int, h: Int): Pair<Array<Bitmap?>, Int> {
         val fill = max(w.toFloat() / src.width, h.toFloat() / src.height)
         val coverWidth = max(w, (src.width * fill).toInt())
         val sw = max(1, coverWidth / SCALE)
@@ -200,15 +213,22 @@ object Backdrop {
         c.drawBitmap(cur, m, p)
         if (cur !== src) cur.recycle()
 
-        val px = IntArray(sw * sh)
-        out.getPixels(px, 0, sw, 0, 0, sw, sh)
-        val tmp = IntArray(px.size)
-        repeat(3) {
-            blurH(px, tmp, sw, sh, RADIUS)
-            blurV(tmp, px, sw, sh, RADIUS)
+        val base = IntArray(sw * sh)
+        out.getPixels(base, 0, sw, 0, 0, sw, sh)
+        val result = arrayOfNulls<Bitmap>(3)
+        for ((i, r) in RADII.withIndex()) {
+            val px = base.copyOf()
+            val tmp = IntArray(px.size)
+            repeat(3) {
+                blurH(px, tmp, sw, sh, r)
+                blurV(tmp, px, sw, sh, r)
+            }
+            val b = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
+            b.setPixels(px, 0, sw, 0, 0, sw, sh)
+            result[i] = b
         }
-        out.setPixels(px, 0, sw, 0, 0, sw, sh)
-        return Pair(out, coverWidth)
+        out.recycle()
+        return Pair(result, coverWidth)
     }
 
     private fun blurH(src: IntArray, dst: IntArray, w: Int, h: Int, r: Int) {
@@ -272,7 +292,13 @@ class Glass(
     var border: Int = 0x4DFFFFFF,
     var highlight: Int = 0x66FFFFFF,
     private val topOnly: Boolean = false,
+    /** 0 = light frost (dock, widgets), 1 = medium, 2 = heavy (drawer, folders, menus). */
+    var depth: Int = 1,
 ) : Drawable() {
+    private val light = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val refract = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val inner = Path()
+    private val m2 = Matrix()
     private val loc = IntArray(2)
     private val last = IntArray(2)
     private val rect = RectF()
@@ -286,7 +312,7 @@ class Glass(
 
     // When the panel (or anything above it) moves, redraw so the frosted wallpaper stays put.
     private val preDraw = ViewTreeObserver.OnPreDrawListener {
-        if (Backdrop.blurred != null && Prefs.glass) {
+        if (Backdrop.level(depth) != null && Prefs.glass) {
             host.getLocationOnScreen(loc)
             if (loc[0] != last[0] || loc[1] != last[1]) invalidateSelf()
         }
@@ -331,7 +357,7 @@ class Glass(
 
     override fun draw(c: Canvas) {
         buildPath(0f)
-        val blur = if (Prefs.glass) Backdrop.blurred else null
+        val blur = if (Prefs.glass) Backdrop.level(depth) else null
         c.save()
         c.clipPath(path)
         if (blur != null) {
@@ -342,12 +368,50 @@ class Glass(
             matrix.setScale(Backdrop.coverW.toFloat() / blur.width, Backdrop.screenH.toFloat() / blur.height)
             matrix.postTranslate(-loc[0].toFloat() - pan, -loc[1].toFloat())
             c.drawBitmap(blur, matrix, bmpPaint)
+
+            // Edge refraction: near the rim the background is magnified a little, like light bending
+            // through the thick edge of real glass.
+            val band = min(14.dpf, min(rect.width(), rect.height()) / 4f)
+            if (band > 3f) {
+                inner.reset()
+                val ir = max(0f, radius - band)
+                if (topOnly) {
+                    inner.addRoundRect(rect.left + band, rect.top + band, rect.right - band, rect.bottom + radius,
+                        floatArrayOf(ir, ir, ir, ir, 0f, 0f, 0f, 0f), Path.Direction.CW)
+                } else {
+                    inner.addRoundRect(rect.left + band, rect.top + band, rect.right - band, rect.bottom - band, ir, ir, Path.Direction.CW)
+                }
+                c.save()
+                c.clipOutPath(inner)
+                m2.set(matrix)
+                m2.postScale(1.06f, 1.06f, rect.centerX(), rect.centerY())
+                refract.alpha = 200
+                c.drawBitmap(blur, m2, refract)
+                c.restore()
+            }
+
             fill.color = glassTint
             c.drawRect(rect, fill)
             val shade = Theme.shade
             if (Color.alpha(shade) > 0) {
                 fill.color = shade
                 c.drawRect(rect, fill)
+            }
+            val mood = Theme.mood
+            if (Color.alpha(mood) > 0) {
+                fill.color = mood
+                c.drawRect(rect, fill)
+            }
+
+            // Light that follows the phone's tilt: a soft glow in screen space, so it glides across
+            // every panel together as you tilt.
+            if (Prefs.tiltLight) {
+                val gx = Backdrop.screenW * (0.5f + 0.45f * Tilt.x) - loc[0]
+                val gy = Backdrop.screenH * (0.22f + 0.35f * Tilt.y) - loc[1]
+                val gr = Backdrop.screenW * 0.75f
+                light.shader = RadialGradient(gx, gy, gr, intArrayOf(0x30FFFFFF, 0x12FFFFFF, 0x00FFFFFF),
+                    floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+                c.drawRect(rect, light)
             }
         } else {
             fill.color = solid
@@ -364,7 +428,7 @@ class Glass(
         }
         if (Color.alpha(highlight) > 0) {
             buildPath(sw / 2f)
-            hi.strokeWidth = sw * 1.2f
+            hi.strokeWidth = sw * 1.4f
             c.drawPath(path, hi)
         }
     }

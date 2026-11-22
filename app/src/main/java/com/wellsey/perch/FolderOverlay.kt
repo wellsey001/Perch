@@ -41,7 +41,7 @@ class FolderOverlay(
         val dm = act.resources.displayMetrics
         panelW = min(dm.widthPixels - 40.dp, 380.dp)
         panel.orientation = LinearLayout.VERTICAL
-        panel.background = Glass(panel, 34.dpf, 0x38FFFFFF, 0xEB2A2D45.toInt(), border = 0x52FFFFFF, highlight = 0x73FFFFFF)
+        panel.background = Glass(panel, 34.dpf, 0x38FFFFFF, 0xEB2A2D45.toInt(), border = 0x52FFFFFF, highlight = 0x73FFFFFF, depth = 2)
         panel.glassShadow(16)
         panel.isClickable = true
         panel.setPadding(14.dp, 18.dp, 14.dp, 14.dp)
@@ -88,7 +88,7 @@ class FolderOverlay(
     fun show() {
         post {
             if (Motion.reduced) {
-                act.setStageBlur(1f); return@post
+                act.setStageBlur(1.6f); return@post
             }
             // Grow out of the folder icon.
             val loc = IntArray(2)
@@ -105,7 +105,7 @@ class FolderOverlay(
                 .setDuration(460).setInterpolator(Ease.spring).start()
             scrim.alpha = 0f
             scrim.animate().alpha(1f).setDuration(300).start()
-            blur(0f, 1f, 300)
+            blur(0f, 1.6f, 300)
             grid.popIn(140, 30)
         }
     }
@@ -137,7 +137,7 @@ class FolderOverlay(
         panel.getLocationOnScreen(loc)
         val s = from.width().toFloat() / panel.width
         scrim.animate().alpha(0f).setDuration(220).start()
-        blur(1f, 0f, 220)
+        blur(1.6f, 0f, 220)
         panel.animate().scaleX(s).scaleY(s)
             .translationX(panel.translationX + from.left - loc[0])
             .translationY(panel.translationY + from.top - loc[1])

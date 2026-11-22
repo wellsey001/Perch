@@ -37,6 +37,8 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
     val pager = Pager(act)
     val dots = PageDots(act)
     val search = LinearLayout(act)
+    val suggestBox = FrameLayout(act)
+    val suggestGrid = AppGrid(act, act, Place.SUGGESTED)
     val dockBox = FrameLayout(act)
     val dockGrid = AppGrid(act, act, Place.DOCK)
 
@@ -90,7 +92,7 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
         // Search pill
         search.orientation = HORIZONTAL
         search.gravity = Gravity.CENTER_VERTICAL
-        search.background = Glass(search, 23.dpf, 0x2EFFFFFF, 0x40FFFFFF, highlight = 0x59FFFFFF)
+        search.background = Glass(search, 23.dpf, 0x2EFFFFFF, 0x40FFFFFF, highlight = 0x59FFFFFF, depth = 0)
         search.setPadding(16.dp, 0, 6.dp, 0)
         search.isClickable = true
         search.contentDescription = "Search"
@@ -110,8 +112,23 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
             marginStart = 18.dp; marginEnd = 18.dp; bottomMargin = 14.dp
         })
 
+        // Smart row: apps you usually open around now, in a slimmer strip of glass above the dock.
+        suggestBox.background = Glass(suggestBox, 24.dpf, 0x1AFFFFFF, 0x29FFFFFF, border = 0x33FFFFFF, highlight = 0x40FFFFFF, depth = 0)
+        suggestBox.setPadding(14.dp, 4.dp, 14.dp, 4.dp)
+        suggestBox.contentDescription = "Suggested apps"
+        suggestGrid.columns = LauncherActivity.DOCK_MAX
+        suggestGrid.rows = 1
+        suggestGrid.showLabels = false
+        suggestGrid.centerRow = true
+        suggestGrid.maxIcon = 40.dp
+        suggestBox.addView(suggestGrid, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, 48.dp))
+        suggestBox.visibility = GONE
+        addView(suggestBox, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            marginStart = 26.dp; marginEnd = 26.dp; bottomMargin = 10.dp
+        })
+
         // Dock
-        dockBox.background = Glass(dockBox, 34.dpf, 0x2EFFFFFF, 0x40FFFFFF, border = 0x52FFFFFF, highlight = 0x73FFFFFF)
+        dockBox.background = Glass(dockBox, 34.dpf, 0x2EFFFFFF, 0x40FFFFFF, border = 0x52FFFFFF, highlight = 0x73FFFFFF, depth = 0)
         dockBox.glassShadow(10)
         dockBox.setPadding(8.dp, 10.dp, 8.dp, 10.dp)
         dockBox.clipChildren = false
@@ -141,6 +158,20 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
         g.maxIcon = 62.dp
         g.showLabels = Prefs.showLabels
         g.requestLayout()
+    }
+
+    fun showSuggestions(keys: List<String>, apps: Map<String, AppInfo>) {
+        val show = Prefs.suggestRow && keys.size >= 2 && !act.editing
+        if (!show) {
+            suggestBox.visibility = GONE
+            return
+        }
+        val changed = suggestGrid.keys != keys
+        suggestGrid.bind(keys, apps)
+        if (suggestBox.visibility != VISIBLE) {
+            suggestBox.visibility = VISIBLE
+            if (!Motion.reduced) suggestBox.riseIn(0)
+        } else if (changed && !Motion.reduced) suggestGrid.popIn(0, 50)
     }
 
     fun showGlance(item: Glance.Item?) {

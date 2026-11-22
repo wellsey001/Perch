@@ -62,7 +62,7 @@ class DrawerView(private val act: LauncherActivity) : FrameLayout(act) {
         setOnClickListener { act.closeDrawer() }
 
         sheet.orientation = LinearLayout.VERTICAL
-        sheet.background = Glass(sheet, 38.dpf, 0x6B141628, 0xF2161830.toInt(), border = 0x4DFFFFFF, highlight = 0x4DFFFFFF, topOnly = true)
+        sheet.background = Glass(sheet, 38.dpf, 0x6B141628, 0xF2161830.toInt(), border = 0x4DFFFFFF, highlight = 0x4DFFFFFF, topOnly = true, depth = 2)
         sheet.setPadding(18.dp, 0, 18.dp, 0)
 
         // Grab handle
@@ -79,7 +79,7 @@ class DrawerView(private val act: LauncherActivity) : FrameLayout(act) {
         // Search box
         searchBox.orientation = LinearLayout.HORIZONTAL
         searchBox.gravity = Gravity.CENTER_VERTICAL
-        searchBox.background = Glass(searchBox, 23.dpf, 0x24FFFFFF, 0x2EFFFFFF, border = 0x38FFFFFF, highlight = 0x33FFFFFF)
+        searchBox.background = Glass(searchBox, 23.dpf, 0x24FFFFFF, 0x2EFFFFFF, border = 0x38FFFFFF, highlight = 0x33FFFFFF, depth = 2)
         searchBox.setPadding(16.dp, 0, 12.dp, 0)
         searchBox.addView(GlyphView(act, Glyphs.SEARCH, 18, stroke = 2.2f))
         input.background = null
@@ -113,7 +113,7 @@ class DrawerView(private val act: LauncherActivity) : FrameLayout(act) {
         content.setPadding(0, 0, 14.dp, 0) // room for the A–Z strip
 
         tabs.orientation = LinearLayout.HORIZONTAL
-        tabs.background = Glass(tabs, 18.dpf, 0x1FFFFFFF, 0x24FFFFFF, border = 0x33FFFFFF, highlight = 0)
+        tabs.background = Glass(tabs, 18.dpf, 0x1FFFFFFF, 0x24FFFFFF, border = 0x33FFFFFF, highlight = 0, depth = 2)
         tabs.setPadding(3.dp, 3.dp, 3.dp, 3.dp)
         tabs.addView(tabPersonal, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
         tabs.addView(tabWork, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
@@ -123,7 +123,7 @@ class DrawerView(private val act: LauncherActivity) : FrameLayout(act) {
         content.addView(tabs, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 36.dp).apply { bottomMargin = 16.dp })
 
         content.addView(suggestedLabel)
-        suggestedCard.background = Glass(suggestedCard, 26.dpf, 0x1FFFFFFF, 0x24FFFFFF, border = 0x33FFFFFF, highlight = 0x40FFFFFF)
+        suggestedCard.background = Glass(suggestedCard, 26.dpf, 0x1FFFFFFF, 0x24FFFFFF, border = 0x33FFFFFF, highlight = 0x40FFFFFF, depth = 2)
         suggestedCard.setPadding(6.dp, 12.dp, 6.dp, 8.dp)
         suggestedGrid.columns = 4
         suggestedGrid.rows = 1
@@ -133,7 +133,7 @@ class DrawerView(private val act: LauncherActivity) : FrameLayout(act) {
             bottomMargin = 22.dp
         })
         content.addView(newLabel)
-        newCard.background = Glass(newCard, 26.dpf, 0x1FFFFFFF, 0x24FFFFFF, border = 0x33FFFFFF, highlight = 0x40FFFFFF)
+        newCard.background = Glass(newCard, 26.dpf, 0x1FFFFFFF, 0x24FFFFFF, border = 0x33FFFFFF, highlight = 0x40FFFFFF, depth = 2)
         newCard.setPadding(6.dp, 12.dp, 6.dp, 8.dp)
         newGrid.columns = 4
         newGrid.rows = 1
@@ -144,7 +144,7 @@ class DrawerView(private val act: LauncherActivity) : FrameLayout(act) {
         })
 
         resultsCard.orientation = LinearLayout.VERTICAL
-        resultsCard.background = Glass(resultsCard, 22.dpf, 0x1FFFFFFF, 0x24FFFFFF, border = 0x33FFFFFF, highlight = 0x33FFFFFF)
+        resultsCard.background = Glass(resultsCard, 22.dpf, 0x1FFFFFFF, 0x24FFFFFF, border = 0x33FFFFFF, highlight = 0x33FFFFFF, depth = 2)
         resultsCard.clipToOutline = true
         resultsCard.visibility = GONE
 
@@ -158,7 +158,7 @@ class DrawerView(private val act: LauncherActivity) : FrameLayout(act) {
 
         webRow.orientation = LinearLayout.HORIZONTAL
         webRow.gravity = Gravity.CENTER_VERTICAL
-        webRow.background = Glass(webRow, 20.dpf, 0x1FFFFFFF, 0x24FFFFFF, border = 0x33FFFFFF, highlight = 0x33FFFFFF)
+        webRow.background = Glass(webRow, 20.dpf, 0x1FFFFFFF, 0x24FFFFFF, border = 0x33FFFFFF, highlight = 0x33FFFFFF, depth = 2)
         webRow.setPadding(16.dp, 0, 16.dp, 0)
         webRow.isClickable = true
         webRow.springPress(0.97f)

@@ -155,6 +155,7 @@ object Glyphs {
     const val SHARE = "M 12 3 L 12 15 M 7 8 L 12 3 L 17 8 M 5 13 L 5 19 C 5 20.1 5.9 21 7 21 L 17 21 C 18.1 21 19 20.1 19 19 L 19 13"
 
     const val BELL = "M 6 16 L 6 11 C 6 7.7 8.7 5 12 5 C 15.3 5 18 7.7 18 11 L 18 16 L 20 18 L 4 18 Z M 10 21 L 14 21"
+    const val CLOCK = "O 12 12 9 M 12 7 L 12 12 L 15.5 14"
     const val PEN = "M 4 20 L 8 19 L 19 8 L 16 5 L 5 16 Z M 14 7 L 17 10"
     const val FOLDER = "M 3 7 C 3 5.9 3.9 5 5 5 L 9 5 L 11 7 L 19 7 C 20.1 7 21 7.9 21 9 L 21 17 C 21 18.1 20.1 19 19 19 L 5 19 C 3.9 19 3 18.1 3 17 Z"
     const val UNGROUP = "M 4 4 L 10 4 L 10 10 L 4 10 Z M 14 14 L 20 14 L 20 20 L 14 20 Z M 14 4 L 20 4 L 20 10 L 14 10 Z"

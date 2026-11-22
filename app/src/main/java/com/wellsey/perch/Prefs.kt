@@ -75,8 +75,15 @@ object Prefs {
     fun launchCount(key: String) = counts.getInt(key, 0)
 
     fun bumpLaunch(key: String) {
-        counts.edit().putInt(key, counts.getInt(key, 0) + 1).putLong("t:$key", System.currentTimeMillis()).apply()
+        val slot = "h${hourSlot()}:$key"
+        counts.edit().putInt(key, counts.getInt(key, 0) + 1).putLong("t:$key", System.currentTimeMillis())
+            .putInt(slot, counts.getInt(slot, 0) + 1).apply()
     }
+
+    /** Launches of [key] in this part of the day (six 4-hour slots). */
+    fun launchesNow(key: String) = counts.getInt("h${hourSlot()}:$key", 0)
+
+    private fun hourSlot() = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY) / 4
 
     fun lastLaunch(key: String) = counts.getLong("t:$key", 0L)
 
@@ -108,6 +115,32 @@ object Prefs {
     var parallax: Boolean
         get() = b("parallax", true)
         set(v) = setB("parallax", v)
+
+    var tiltLight: Boolean
+        get() = b("tilt_light", true)
+        set(v) = setB("tilt_light", v)
+    var mood: Boolean
+        get() = b("mood", true)
+        set(v) = setB("mood", v)
+    var suggestRow: Boolean
+        get() = b("suggest_row", true)
+        set(v) = setB("suggest_row", v)
+
+    // Photo frame widget: "immich" or "phone"
+    var photoSource: String
+        get() = s("photo_source", "immich")
+        set(v) = setS("photo_source", v)
+    var immichUrl: String
+        get() = s("immich_url", "")
+        set(v) = setS("immich_url", v.trim().trimEnd('/'))
+    var immichKey: String
+        get() = s("immich_key", "")
+        set(v) = setS("immich_key", v.trim())
+
+    /** The current accent, saved so Clack can match it. */
+    var accent: Int
+        get() = sp.getInt("accent", 0xFF7DD3FC.toInt())
+        set(v) = sp.edit().putInt("accent", v).apply()
 
     // Home extras
     var glance: Boolean

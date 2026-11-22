@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <!-- Swipe down for notifications -->
     <uses-permission android:name="android.permission.EXPAND_STATUS_BAR" />
+    <!-- Photo frame widget, when set to use this phone's photos -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <!-- Contacts in search (asked for when you choose it) -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- Uninstall from the long-press menu -->
@@ -41,6 +43,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Perch">
 
         <activity
@@ -74,6 +77,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Lets Clack read Perch's accent colour so the keyboard matches. Colour only, nothing personal. -->
+        <provider
+            android:name=".ThemeProvider"
+            android:authorities="com.wellsey.perch.theme"
+            android:exported="true" />
 
         <service
             android:name=".Notifier"

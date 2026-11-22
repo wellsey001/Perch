@@ -82,7 +82,7 @@ class MenuOverlay(
     private fun buildCard(items: List<MenuEntry>): LinearLayout {
         val card = LinearLayout(act)
         card.orientation = LinearLayout.VERTICAL
-        card.background = Glass(card, 22.dpf, 0x38FFFFFF, 0xEB2A2D45.toInt(), border = 0x52FFFFFF, highlight = 0x66FFFFFF)
+        card.background = Glass(card, 22.dpf, 0x38FFFFFF, 0xEB2A2D45.toInt(), border = 0x52FFFFFF, highlight = 0x66FFFFFF, depth = 2)
         card.clipToOutline = true
         card.glassShadow(12)
         for ((i, item) in items.withIndex()) {
@@ -240,7 +240,7 @@ class PromptCard(
 ) : LinearLayout(act) {
     init {
         orientation = VERTICAL
-        background = Glass(this, 26.dpf, 0x40FFFFFF, 0xEB2A2D45.toInt(), border = 0x52FFFFFF, highlight = 0x73FFFFFF)
+        background = Glass(this, 26.dpf, 0x40FFFFFF, 0xEB2A2D45.toInt(), border = 0x52FFFFFF, highlight = 0x73FFFFFF, depth = 2)
         glassShadow(14)
         setPadding(20.dp, 18.dp, 20.dp, 16.dp)
         isClickable = true
@@ -308,7 +308,7 @@ class GlassSheet(context: android.content.Context, title: String, private val bo
         scrim.setOnClickListener { close() }
         addView(scrim, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         card.orientation = LinearLayout.VERTICAL
-        card.background = Glass(card, 28.dpf, 0x40FFFFFF, 0xF2262A40.toInt(), border = 0x52FFFFFF, highlight = 0x73FFFFFF)
+        card.background = Glass(card, 28.dpf, 0x40FFFFFF, 0xF2262A40.toInt(), border = 0x52FFFFFF, highlight = 0x73FFFFFF, depth = 2)
         card.clipToOutline = true
         card.glassShadow(16)
         card.isClickable = true

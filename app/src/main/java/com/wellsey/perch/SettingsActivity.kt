@@ -47,7 +47,7 @@ class SettingsActivity : Activity() {
 
         root = FrameLayout(this)
         val bg = View(this)
-        bg.background = Glass(bg, 0f, 0x470A0C1E, 0xF0101326.toInt(), border = 0, highlight = 0)
+        bg.background = Glass(bg, 0f, 0x470A0C1E, 0xF0101326.toInt(), border = 0, highlight = 0, depth = 2)
         root.addView(bg, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         val scroll = ScrollView(this)
         scroll.isVerticalScrollBarEnabled = false
@@ -145,6 +145,8 @@ class SettingsActivity : Activity() {
             ), Prefs.glassTone) { Prefs.glassTone = it; root.invalidateDeep() }
         })
         lc.addView(toggle(Glyphs.MOVE, 0xFF14B8A6.toInt(), "Wallpaper glides between pages", Prefs.parallax) { Prefs.parallax = it })
+        lc.addView(toggle(Glyphs.SUN, 0xFFEAB308.toInt(), "Light follows tilt", Prefs.tiltLight) { Prefs.tiltLight = it; root.invalidateDeep() })
+        lc.addView(toggle(Glyphs.MOON, 0xFF6366F1.toInt(), "Time-of-day mood", Prefs.mood) { Prefs.mood = it; root.invalidateDeep() })
         list.addView(sectionTitle("Look"))
         list.addView(lc, cardLp().apply { topMargin = 8.dp })
 
@@ -154,6 +156,7 @@ class SettingsActivity : Activity() {
         tc.addView(toggle(Glyphs.SEARCH, 0xFF3B82F6.toInt(), "Search bar on home", Prefs.showSearch, false) { Prefs.showSearch = it })
         tc.addView(toggle(Glyphs.CLOUD, 0xFFF59E0B.toInt(), "Weather and calendar", Prefs.showWidgets) { Prefs.showWidgets = it })
         tc.addView(toggle(Glyphs.BELL, 0xFFF97316.toInt(), "At a Glance (music, charging, alarm)", Prefs.glance) { Prefs.glance = it })
+        tc.addView(toggle(Glyphs.SPARK, 0xFF06B6D4.toInt(), "Suggested apps above the dock", Prefs.suggestRow) { Prefs.suggestRow = it })
         tc.addView(toggle(Glyphs.INFO, 0xFFEF4444.toInt(), "Notification dots", Prefs.dots && Notifier.isEnabled(this)) {
             Prefs.dots = it
             if (it && !Notifier.isEnabled(this)) explainDots()
@@ -203,6 +206,34 @@ class SettingsActivity : Activity() {
         val hiddenCount = Prefs.hidden.size
         gc.addView(row(Glyphs.HIDE, 0xFF6366F1.toInt(), "Hidden apps", if (hiddenCount == 0) "None" else "$hiddenCount hidden") { showHidden() })
         list.addView(gc, cardLp().apply { topMargin = 8.dp })
+
+        // Photo frame
+        list.addView(sectionTitle("Photo frame widget"))
+        val pc = card()
+        val phone = Prefs.photoSource == "phone"
+        pc.addView(row(Glyphs.IMAGE, 0xFFEC4899.toInt(), "Photos from", if (phone) "This phone" else "Immich", divider = false) {
+            choose("Photo frame shows", listOf("immich" to "My Immich library", "phone" to "Photos on this phone"), Prefs.photoSource) {
+                Prefs.photoSource = it
+                if (it == "phone" && !PhotoSource.hasPhonePermission(this)) {
+                    requestPermissions(arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES), REQ_PHOTOS)
+                }
+            }
+        })
+        if (!phone) {
+            pc.addView(row(Glyphs.GLOBE, 0xFF3B82F6.toInt(), "Immich server", Prefs.immichUrl.ifEmpty { "Not set" }.removePrefix("https://").removePrefix("http://")) {
+                askText("Immich server address", "https://photos.example.com or http://192.168.1.20:2283", Prefs.immichUrl) {
+                    Prefs.immichUrl = if (it.isNotBlank() && !it.contains("://")) "http://$it" else it
+                }
+            })
+            pc.addView(row(Glyphs.LOCK, 0xFF64748B.toInt(), "API key", if (Prefs.immichKey.isEmpty()) "Not set" else "Saved") {
+                askText("Immich API key", "Immich › Account settings › API keys", "", password = true) { Prefs.immichKey = it }
+            })
+        } else if (!PhotoSource.hasPhonePermission(this)) {
+            pc.addView(row(Glyphs.CHECK, 0xFF22C55E.toInt(), "Allow access to photos", "") {
+                requestPermissions(arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES), REQ_PHOTOS)
+            })
+        }
+        list.addView(pc, cardLp().apply { topMargin = 8.dp })
 
         // Backup
         list.addView(sectionTitle("Backup"))
@@ -264,7 +295,7 @@ class SettingsActivity : Activity() {
 
     private fun card(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = Glass(this, 26.dpf, 0x29FFFFFF, 0x1FFFFFFF, border = 0x47FFFFFF, highlight = 0x59FFFFFF)
+        background = Glass(this, 26.dpf, 0x29FFFFFF, 0x1FFFFFFF, border = 0x47FFFFFF, highlight = 0x59FFFFFF, depth = 2)
         clipToOutline = true
     }
 
@@ -502,6 +533,38 @@ class SettingsActivity : Activity() {
         }
     }
 
+    private fun askText(title: String, hint: String, current: String, password: Boolean = false, save: (String) -> Unit) {
+        val c = sheetCard(title)
+        val input = android.widget.EditText(this).apply {
+            setText(current)
+            this.hint = hint
+            setHintTextColor(0x80FFFFFF.toInt())
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            isSingleLine = true
+            inputType = if (password) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            else android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+            background = GradientDrawable().apply { cornerRadius = 14.dpf; setColor(0x26FFFFFF) }
+            setPadding(16.dp, 0, 16.dp, 0)
+        }
+        c.addView(input, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 50.dp).apply {
+            marginStart = 20.dp; marginEnd = 20.dp; bottomMargin = 16.dp
+        })
+        val buttons = LinearLayout(this)
+        buttons.orientation = LinearLayout.HORIZONTAL
+        buttons.gravity = Gravity.END
+        buttons.setPadding(20.dp, 0, 20.dp, 18.dp)
+        buttons.addView(pillButton("Save") {
+            save(input.text.toString().trim())
+            closeSheet()
+            build()
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, 42.dp))
+        c.addView(buttons, lp())
+        openSheet(c)
+        input.requestFocus()
+        input.post { input.windowInsetsController?.show(WindowInsets.Type.ime()) }
+    }
+
     private fun backup() {
         val i = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -611,7 +674,7 @@ class SettingsActivity : Activity() {
     private fun sheetCard(title: String): LinearLayout {
         val c = LinearLayout(this)
         c.orientation = LinearLayout.VERTICAL
-        c.background = Glass(c, 28.dpf, 0x40FFFFFF, 0xF2262A40.toInt(), border = 0x52FFFFFF, highlight = 0x73FFFFFF)
+        c.background = Glass(c, 28.dpf, 0x40FFFFFF, 0xF2262A40.toInt(), border = 0x52FFFFFF, highlight = 0x73FFFFFF, depth = 2)
         c.clipToOutline = true
         c.glassShadow(16)
         c.isClickable = true
@@ -633,6 +696,13 @@ class SettingsActivity : Activity() {
         holder.addView(card, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM).apply {
             setMargins(12.dp, 0, 12.dp, insets.bottom + 12.dp)
         })
+        // Stay above the keyboard when typing in the sheet.
+        holder.setOnApplyWindowInsetsListener { v, wi ->
+            val ime = wi.getInsets(WindowInsets.Type.ime()).bottom
+            (card.layoutParams as FrameLayout.LayoutParams).bottomMargin = kotlin.math.max(insets.bottom, ime) + 12.dp
+            card.requestLayout()
+            wi
+        }
         root.addView(holder, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         sheet = holder
         if (!Motion.reduced) {
@@ -657,6 +727,7 @@ class SettingsActivity : Activity() {
         private const val REQ_BACKUP = 22
         private const val REQ_RESTORE = 23
         private const val REQ_CONTACTS = 24
+        private const val REQ_PHOTOS = 25
     }
 }
 

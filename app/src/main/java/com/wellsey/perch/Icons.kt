@@ -113,6 +113,21 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
         textAlign = Paint.Align.CENTER
     }
     private var shadowFor = 0
+    private var lastBadge = 0
+    private var badgeScale = 1f
+    private var badgeAnim: ValueAnimator? = null
+
+    /** A soft pulse when a badge appears or its count goes up. */
+    private fun pulseBadge() {
+        if (Motion.reduced) return
+        badgeAnim?.cancel()
+        badgeAnim = ValueAnimator.ofFloat(0.2f, 1f).apply {
+            duration = 520
+            interpolator = Ease.spring
+            addUpdateListener { badgeScale = it.animatedValue as Float; invalidate() }
+            start()
+        }
+    }
     private var shownLabel: CharSequence? = null
     private val labelGap = 7.dp
     private val labelH: Int = ceil(text.fontMetrics.descent - text.fontMetrics.ascent).toInt()
@@ -222,15 +237,20 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
             Glyphs.draw(canvas, "M 7 12 L 17 12", cx - 8.dpf, cy - 8.dpf, 16.dpf, Color.WHITE, 2.6f)
         }
         val n = badgeCount()
+        if (n > lastBadge && isAttachedToWindow) post { pulseBadge() }
+        lastBadge = n
         if (n > 0 && !removable) {
             val txt = if (n > 99) "99+" else n.toString()
             val h = 20.dpf
             val w = kotlin.math.max(h, dotText.measureText(txt) + 10.dpf)
             val right = l + s + 5.dp
             val top = t - 5.dp
+            canvas.save()
+            canvas.scale(badgeScale, badgeScale, right - w / 2f, top + h / 2f)
             canvas.drawRoundRect(right - w, top, right, top + h, h / 2f, h / 2f, dotPaint)
             canvas.drawRoundRect(right - w, top, right, top + h, h / 2f, h / 2f, dotRing)
             canvas.drawText(txt, right - w / 2f, top + h / 2f - (dotText.descent() + dotText.ascent()) / 2f, dotText)
+            canvas.restore()
         }
     }
 
@@ -315,7 +335,8 @@ class AppIconView(context: Context, private val host: IconHost, val place: Place
 
     private fun press(down: Boolean) {
         if (Motion.reduced) return
-        if (down) animate().scaleX(0.86f).scaleY(0.86f).setDuration(280).setInterpolator(Ease.spring).start()
+        // A gentle squash: a little flatter than it is narrower, like pressing something soft.
+        if (down) animate().scaleX(0.9f).scaleY(0.84f).setDuration(220).setInterpolator(Ease.spring).start()
         else animate().scaleX(1f).scaleY(1f).setDuration(320).setInterpolator(Ease.spring).start()
     }
 

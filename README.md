@@ -22,6 +22,11 @@
 | ✏️ **Edit mode** | Icons jiggle; drag them around, into the dock, or to the screen edge for another page. Tap Done (or empty space) to finish. |
 | 🌀 **Motion** | Icons spring in, launches zoom from the icon, sheets glide. Turn on *Remove animations* in Android's accessibility settings and Perch keeps still. |
 | ⚙️ **Settings** | Wallpaper, grid size, switches for the search bar, widgets, glass and haptics, gestures, hidden apps, and set-as-default. |
+| ✨ **Living glass** | Light glides across the glass as you tilt the phone, edges bend the background like thick glass, and three blur depths make the screen feel layered. |
+| 🌅 **Time-of-day mood** | The glass cools in the morning, warms in the evening and dims late at night. |
+| 💡 **Smart row** | Apps you usually open at this time of day, in a slim glass strip above the dock. |
+| 🕰️ **Perch widgets** | A glass analogue clock, and a photo frame showing memories from your Immich library (or your phone). |
+| ⌨️ **Matches Clack** | Clack's Glass theme picks up Perch's accent colour, so keyboard and home screen look like one system. |
 | 📁 **Folders** | Hold an app over another for a moment and drop it to make a folder. Tap to open a glass panel; rename it, drag apps out. |
 | 🧩 **Real widgets** | Swipe right on the first page (or long-press empty space › Widgets) for a panel of any app's Android widgets, in glass frames. Long-press one to resize, move or remove it. |
 | 🔴 **Notification dots** | Counts on icons and folders (needs notification access; Perch never reads what they say). |
@@ -71,6 +76,8 @@ Perch frosts the wallpaper itself, so the glass works on any phone running Andro
 | All files access (optional) | Read your current wallpaper so the glass can frost it |
 | Expand status bar | Swipe down for notifications / quick settings |
 | Contacts (optional) | Contacts in search |
+| Photos (optional) | Photo frame using this phone's photos |
+| Plain-HTTP traffic | Reaching an Immich server on your home network (e.g. `http://192.168.1.20:2283`) |
 | Notification access (optional) | Notification dots, and music in At a Glance |
 | Request uninstall | Uninstall from the long-press menu |
 

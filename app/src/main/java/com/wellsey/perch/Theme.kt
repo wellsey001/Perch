@@ -28,8 +28,50 @@ object Theme {
             null
         }
         if (colors != null) accent = vivid(colors.primaryColor.toArgb())
+        if (Prefs.accent != accent) Prefs.accent = accent
         val hintsDark = colors != null && (colors.colorHints and WallpaperColors.HINT_SUPPORTS_DARK_TEXT) != 0
         bright = Backdrop.luminance > 0.6f || (Backdrop.luminance < 0f && hintsDark)
+    }
+
+    /**
+     * Time-of-day mood on the glass: a cool lift in the morning, nothing in the day, a warm glow in the
+     * evening and a deep dim late at night.
+     */
+    val mood: Int
+        get() {
+            if (!Prefs.mood) return 0
+            val h = java.util.Calendar.getInstance().let { it.get(java.util.Calendar.HOUR_OF_DAY) + it.get(java.util.Calendar.MINUTE) / 60f }
+            return when {
+                h < 5f -> 0x2A0A0A28
+                h < 6.5f -> blend(0x2A0A0A28, 0x0DCFE8FF, (h - 5f) / 1.5f)
+                h < 9f -> blend(0x0DCFE8FF, 0, (h - 6.5f) / 2.5f)
+                h < 17f -> 0
+                h < 19.5f -> blend(0, 0x1AFF9A3C, (h - 17f) / 2.5f)
+                h < 22f -> blend(0x1AFF9A3C, 0x2A0A0A28, (h - 19.5f) / 2.5f)
+                else -> 0x2A0A0A28
+            }
+        }
+
+    /** How much to dim the wallpaper itself at night (0..1). */
+    val wallpaperDim: Float
+        get() {
+            if (!Prefs.mood) return 0f
+            val h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            return when (h) {
+                in 22..23, in 0..4 -> 0.22f
+                21, 5 -> 0.11f
+                else -> 0f
+            }
+        }
+
+    private fun blend(a: Int, b: Int, t: Float): Int {
+        val f = t.coerceIn(0f, 1f)
+        return Color.argb(
+            (Color.alpha(a) + (Color.alpha(b) - Color.alpha(a)) * f).toInt(),
+            (Color.red(a) + (Color.red(b) - Color.red(a)) * f).toInt(),
+            (Color.green(a) + (Color.green(b) - Color.green(a)) * f).toInt(),
+            (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * f).toInt(),
+        )
     }
 
     /** An extra darkening layer drawn on glass panels. */

@@ -48,8 +48,10 @@ object Backup {
                 }
             }
         }
-        // Widget ids belong to this install of Perch, so restored widgets need adding again.
-        e.remove("widgets")
+        // Android widget ids belong to this install of Perch, so those need adding again;
+        // Perch's own widgets (negative ids) come back as they were.
+        val w = prefs.optJSONObject("widgets")?.optString("v").orEmpty()
+        e.putString("widgets", w.split(",").filter { it.startsWith("-") }.joinToString(","))
         e.apply()
         Prefs.rev = System.currentTimeMillis()
     }
