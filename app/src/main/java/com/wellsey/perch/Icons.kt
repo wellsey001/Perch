@@ -402,6 +402,10 @@ class AppGrid(context: Context, private val host: IconHost, val place: Place) : 
     var maxIcon = 62.dp
     var showLabels = true
     var centerRow = false // dock: centre a short row
+    /** Told the icon size this grid settled on (the dock matches the home grid with it). */
+    var onIconSize: ((Int) -> Unit)? = null
+    var iconSizeUsed = 0
+        private set
     var keys: List<String?> = emptyList()
         private set
     private val views = LinkedHashMap<String, AppIconView>()
@@ -457,6 +461,10 @@ class AppGrid(context: Context, private val host: IconHost, val place: Place) : 
         }
         val labelSpace = if (showLabels) 30.dp else 6.dp
         val icon = max(24.dp, min(maxIcon, min(cellW - 14.dp, cellH - labelSpace)))
+        if (icon != iconSizeUsed) {
+            iconSizeUsed = icon
+            onIconSize?.let { cb -> post { cb(icon) } }
+        }
         val ws = MeasureSpec.makeMeasureSpec(cellW, MeasureSpec.EXACTLY)
         val hs = MeasureSpec.makeMeasureSpec(cellH, MeasureSpec.EXACTLY)
         for (v in views.values) {

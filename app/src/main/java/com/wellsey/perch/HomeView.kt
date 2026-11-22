@@ -157,7 +157,18 @@ class HomeView(private val act: LauncherActivity) : LinearLayout(act) {
         g.rows = Prefs.rows
         g.maxIcon = 62.dp
         g.showLabels = Prefs.showLabels
+        g.onIconSize = { matchDock(it) }
         g.requestLayout()
+    }
+
+    /** Dock icons use the same size as the home grid's, so 5×5 doesn't leave a chunky dock. */
+    private fun matchDock(size: Int) {
+        if (dockGrid.maxIcon == size) return
+        dockGrid.maxIcon = size
+        val lp = dockGrid.layoutParams
+        lp.height = size + 6.dp
+        dockGrid.layoutParams = lp
+        suggestGrid.maxIcon = kotlin.math.min(40.dp, (size * 0.7f).toInt())
     }
 
     fun showSuggestions(keys: List<String>, apps: Map<String, AppInfo>) {
