@@ -1,3 +1,4 @@
+<p align="center"><img src="docs/icon.png" width="120" alt="Perch icon: a songbird on a branch against a glowing sunset"></p>
 <h1 align="center">Perch</h1>
 <p align="center"><i>A glassy, iOS-style home screen for Android.</i></p>
 
